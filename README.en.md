@@ -7,7 +7,7 @@
 [![Dev Branch](https://badgen.net/badge/branch/v0.0.1.7-pw2/blue)](https://github.com/Johnserf-Seed/f2/tree/v0.0.1.7-pw2)
 [![Discord](https://img.shields.io/discord/1146473603450282004?label=Discord)](https://discord.gg/3PhtPmgHf8)
 [![codecov](https://codecov.io/gh/Johnserf-Seed/f2/graph/badge.svg?token=T9DH4QPZSS)](https://codecov.io/gh/Johnserf-Seed/f2)
-[![TikHub](https://img.shields.io/badge/%E8%B5%9E%E5%8A%A9%E5%95%86-TikHub-orange?style=flat-square&logo=tiktok)](https://beta-web.tikhub.io/users/signup?referral_code=6hLcGD94)
+[![TikHub](https://img.shields.io/badge/%E8%B5%9E%E5%8A%A9%E5%95%86-TikHub-orange?style=flat-square&logo=tiktok)](https://user.tikhub.io/users/signup?referral_code=6hLcGD94&utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad)
 [![APACHE-2.0](https://img.shields.io/github/license/johnserf-seed/f2)](https://github.com/Johnserf-Seed/f2/blob/main/LICENSE)
 
 
@@ -1016,17 +1016,24 @@ For the complete list of features, please refer to the [API Documentation](https
 
 ## 💰 Sponsor
 
-<a href="https://tikhub.io/"><img style="border-radius:20px" src="https://github.com/Johnserf-Seed/f2/assets/40727745/70a67dd1-dccb-44a9-b635-c29a950f1daf"></a>
+<p align="center">
+  <a href="https://tikhub.io/?utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad">
+    <img style="border-radius:20px" width="845" height="845" alt="TikHub IO_Banner en" src="https://github.com/user-attachments/assets/86905c45-557f-4459-be13-93debddf2bdc" />
+  </a>
+</p>
 
-[TikHub](https://tikhub.io/) is a provider of premium data interface services. You can get free credits by signing up daily. You can use my signup invite link: [https://beta-web.tikhub.io/users/signup?referral_code=6hLcGD94](https://beta-web.tikhub.io/users/signup?referral_code=6hLcGD94) or Invitation code: `6hLcGD94` to get `$2` credit by signing up and recharging.
+[TikHub](https://tikhub.io/?utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) offers over 700 endpoints for retrieving and analyzing data from 14+ social media platforms — including videos, users, comments, stores, products, trends, and more, enabling comprehensive data access and analysis in one place.
 
-[TikHub](https://tikhub.io/) offers the following services:
+You can get free credits by signing up daily. You can use my signup invite link: [https://user.tikhub.io/users/signup?referral_code=6hLcGD94](https://user.tikhub.io/users/signup?referral_code=6hLcGD94&utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) or Invitation code: `6hLcGD94` to get `$2` credit by signing up and recharging.
+
+[TikHub](https://tikhub.io/?utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) offers the following services:
 
 - Rich data interface
 - Sign up daily to get free credits
 - High quality API service
-- Official website: https://tikhub.io/
-- Project address: https://github.com/TikHubIO/
+- Official website: [https://tikhub.io/](https://tikhub.io/?utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad)
+- Project address: [https://github.com/TikHubIO/](https://github.com/TikHubIO/)
+
 ## 👨‍💻 Contribute
 
 If you're interested in contributing code to `F2`, please refer to the [contributing guide](https://github.com/Johnserf-Seed/f2/blob/main/CONTRIBUTING.md).

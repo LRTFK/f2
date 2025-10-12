@@ -7,7 +7,7 @@
 [![Dev Branch](https://badgen.net/badge/branch/v0.0.1.7-pw2/blue)](https://github.com/Johnserf-Seed/f2/tree/v0.0.1.7-pw2)
 [![Discord](https://img.shields.io/discord/1146473603450282004?label=Discord)](https://discord.gg/3PhtPmgHf8)
 [![codecov](https://codecov.io/gh/Johnserf-Seed/f2/graph/badge.svg?token=T9DH4QPZSS)](https://codecov.io/gh/Johnserf-Seed/f2)
-[![TikHub](https://img.shields.io/badge/%E8%B5%9E%E5%8A%A9%E5%95%86-TikHub-orange?style=flat-square&logo=tiktok)](https://beta-web.tikhub.io/users/signup?referral_code=6hLcGD94)
+[![TikHub](https://img.shields.io/badge/%E8%B5%9E%E5%8A%A9%E5%95%86-TikHub-orange?style=flat-square&logo=tiktok)](https://user.tikhub.io/users/signup?referral_code=6hLcGD94&utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad)
 [![APACHE-2.0](https://img.shields.io/github/license/johnserf-seed/f2)](https://github.com/Johnserf-Seed/f2/blob/main/LICENSE)
 
 
@@ -1016,17 +1016,23 @@
 
 ## 💰 赞助商
 
-<a href="https://tikhub.io/"><img style="border-radius:20px" src="https://github.com/Johnserf-Seed/f2/assets/40727745/70a67dd1-dccb-44a9-b635-c29a950f1daf"></a>
+<p align="center">
+  <a href="https://tikhub.io/?utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad">
+    <img style="border-radius:20px" width="845" height="845" alt="TikHub IO_Banner zh" src="https://github.com/user-attachments/assets/18ce4674-83b3-4312-a5d8-a45cf7cef7b2">
+  </a>
+</p>
 
-[TikHub](https://tikhub.io/) 是一家提供优质数据接口服务的供应商。通过每日签到，可以获取免费额度。可以使用我的注册邀请链接：[https://beta-web.tikhub.io/users/signup?referral_code=6hLcGD94](https://beta-web.tikhub.io/users/signup?referral_code=6hLcGD94) 或 邀请码：`6hLcGD94`，注册并充值即可获得`$2`额度。
+[TikHub](https://tikhub.io/?utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) 提供超过 700 个端点，可用于从 14+ 个社交媒体平台获取与分析数据 —— 包括视频、用户、评论、商店、商品与趋势等，一站式完成所有数据访问与分析。
 
-[TikHub](https://tikhub.io/) 提供以下服务：
+通过每日签到，可以获取免费额度。可以使用我的注册邀请链接：[https://user.tikhub.io/users/signup?referral_code=6hLcGD94](https://user.tikhub.io/users/signup?referral_code=6hLcGD94&utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) 或 邀请码：`6hLcGD94`，注册并充值即可获得`$2`额度。
+
+[TikHub](https://tikhub.io/?utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad) 提供以下服务：
 
 - 丰富的数据接口
 - 每日签到免费获取额度
 - 高质量的API服务
-- 官网：https://tikhub.io/
-- 项目地址：https://github.com/TikHubIO/
+- 官网：[https://tikhub.io/](https://tikhub.io/?utm_source=github.com/Johnserf-Seed/f2&utm_medium=marketing_social&utm_campaign=retargeting&utm_content=carousel_ad)
+- GitHub地址：[https://github.com/TikHubIO/](https://github.com/TikHubIO/)
 
 ## 👨‍💻 贡献
 
