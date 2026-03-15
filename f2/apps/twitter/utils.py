@@ -1,6 +1,7 @@
 # path: f2/apps/twitter/utils.py
 
 import asyncio
+import base64
 import re
 import traceback
 from pathlib import Path
@@ -24,6 +25,7 @@ from f2.log.logger import logger, trace_logger
 from f2.utils.config.conf_manager import ConfigManager
 from f2.utils.file.name import split_filename
 from f2.utils.string.formatter import extract_valid_urls
+from f2.utils.time.timestamp import str_2_timestamp
 
 
 class ClientConfManager:
@@ -476,6 +478,10 @@ def rename_user_folder(old_path: Path, new_nickname: str) -> Path:
     return new_path
 
 
+import base64
+import re
+
+
 def extract_desc(text):
     """
     提取推特标题，抛弃从 "https" 开始及其后的内容，包括其前一个空格。
@@ -496,3 +502,80 @@ def extract_desc(text):
         if cutoff_index != -1:
             return text[:cutoff_index].strip()  # 返回截断后的部分
     return text.strip()  # 如果没有 "https"，返回去掉两端空格后的内容
+
+
+def cursor_to_timestamp(cursor_str: str) -> int:
+    """
+    从 Twitter cursor 解码并转换为毫秒时间戳
+
+    Twitter cursor 是 Base64 编码的字符串，包含 Twitter Snowflake ID
+    通过解码 cursor 并提取 Snowflake ID，然后转换为时间戳
+
+    Args:
+        cursor_str (str): Twitter cursor 字符串，如 "DAAHCgABHDdvw-f__-sLAAIAAAATMjAyNjg5MDY3MzI3MDc2NzkzMggAAwAAAAIAAA"
+
+    Returns:
+        int: 毫秒时间戳，如果解码失败返回 0
+
+    Note:
+        Twitter Snowflake ID 结构:
+        - 64 位整数
+        - 41 位时间戳 (毫秒级，相对于 Twitter epoch)
+        - 10 位机器 ID
+        - 12 位序列号
+        Twitter epoch: 1288834974657 (2010-11-04 01:42:54.657 UTC)
+    """
+    if not cursor_str:
+        return 0
+
+    try:
+        # Base64 解码
+        decoded = base64.b64decode(cursor_str)
+        decoded_str = decoded.decode('latin-1')  # 使用 latin-1 解码以保留所有字节
+
+        # 使用正则表达式提取数字字符串 (Twitter Snowflake ID)
+        match = re.search(r'(\d{15,20})', decoded_str)
+        if match:
+            snowflake_id = int(match.group(1))
+
+            # Twitter Snowflake ID 转时间戳
+            # 右移 22 位获取时间戳部分
+            timestamp_ms = (snowflake_id >> 22) + 1288834974657
+            return timestamp_ms
+        else:
+            logger.debug(_("cursor 中未找到有效的 Snowflake ID: {0}").format(cursor_str[:50]))
+            return 0
+
+    except Exception as e:
+        logger.debug(_("cursor 解码失败：{0}, 错误：{1}").format(cursor_str[:50], e))
+        return 0
+
+
+def get_page_earliest_timestamp(tweet_created_at_list: list) -> int:
+    """
+    从页面的推文创建时间列表中获取最早的时间戳
+
+    Args:
+        tweet_created_at_list (list): 推文创建时间字符串列表
+
+    Returns:
+        int: 最早的时间戳 (毫秒)，如果列表为空或所有值无效返回 0
+    """
+    if not tweet_created_at_list:
+        return 0
+
+    valid_timestamps = []
+    for ts_str in tweet_created_at_list:
+        if ts_str and ts_str != "Invalid timestamp":
+            try:
+                ts = str_2_timestamp(ts_str, unit="milli")
+                if ts > 0:
+                    valid_timestamps.append(ts)
+            except Exception:
+                continue
+
+    if not valid_timestamps:
+        return 0
+
+    # 返回最早的时间戳（最小值）
+    return min(valid_timestamps)

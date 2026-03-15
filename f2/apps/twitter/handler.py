@@ -27,13 +27,15 @@ from f2.apps.twitter.utils import (
     TweetIdFetcher,
     UniqueIdFetcher,
     create_or_rename_user_folder,
+    cursor_to_timestamp,
+    get_page_earliest_timestamp,
 )
 from f2.cli.cli_console import RichConsoleManager
 from f2.exceptions.api_exceptions import APIResponseError
 from f2.i18n.translator import _
 from f2.log.logger import logger
 from f2.utils.core.decorators import mode_function_map, mode_handler
-from f2.utils.time.timestamp import get_timestamp, timestamp_2_str
+from f2.utils.time.timestamp import get_timestamp, timestamp_2_str, interval_2_timestamp
 
 rich_console = RichConsoleManager().rich_console
 rich_prompt = RichConsoleManager().rich_prompt
@@ -275,6 +277,15 @@ class TwitterHandler:
         tweets_collected = 0
         nickname_raw = ""  # 初始化变量，避免未定义错误
 
+        # 处理 interval 参数
+        interval = self.kwargs.get("interval")
+        interval_start_timestamp = 0
+        if interval is not None and interval != "all":
+            interval_start_timestamp = interval_2_timestamp(interval, date_type="start")
+            logger.info(_("日期范围筛选：从 {} 开始").format(
+                timestamp_2_str(str(interval_start_timestamp)[:13])
+            ))
+
         logger.info(_("开始爬取用户：{0} 发布的推文").format(userId))
 
         while tweets_collected < max_counts:
@@ -303,6 +314,28 @@ class TwitterHandler:
             )
 
             # 当cursorType值为Bottom且entryId长度为2时，表示已经爬取完所有的推文
+            # 检查是否已经爬取到指定日期范围之前
+            if interval_start_timestamp > 0:
+                # 优先使用 cursor 解码获取时间戳
+                cursor_timestamp = cursor_to_timestamp(tweet.min_cursor)
+                if cursor_timestamp > 0:
+                    if cursor_timestamp < interval_start_timestamp:
+                        logger.info(_("已经爬取到指定时间范围内的推文（cursor 时间戳：{0}）").format(
+                            timestamp_2_str(str(cursor_timestamp)[:13])
+                        ))
+                        break
+                else:
+                    # cursor 解码失败，使用页面推文的创建时间
+                    page_earliest_timestamp = get_page_earliest_timestamp(
+                        tweet.tweet_created_at
+                    )
+                    if page_earliest_timestamp > 0 and page_earliest_timestamp < interval_start_timestamp:
+                        logger.info(_("已经爬取到指定时间范围内的推文（页面最早时间：{0}）").format(
+                            timestamp_2_str(str(page_earliest_timestamp)[:13])
+                        ))
+                        break
+            
+
             if tweet.cursorType == "Bottom" and len(tweet.entryId) == 2:
                 logger.info(_("已处理完所有发布的推文"))
                 break
@@ -382,6 +415,15 @@ class TwitterHandler:
 
         max_counts = max_counts or float("inf")
         tweets_collected = 0
+
+        # 处理 interval 参数
+        interval = self.kwargs.get("interval")
+        interval_start_timestamp = 0
+        if interval is not None and interval != "all":
+            interval_start_timestamp = interval_2_timestamp(interval, date_type="start")
+            logger.info(_("日期范围筛选：从 {} 开始").format(
+                timestamp_2_str(str(interval_start_timestamp)[:13])
+            ))
 
         logger.info(_("开始爬取用户：{0} 喜欢的推文").format(userId))
 
@@ -490,6 +532,15 @@ class TwitterHandler:
 
         max_counts = max_counts or float("inf")
         tweets_collected = 0
+
+        # 处理 interval 参数
+        interval = self.kwargs.get("interval")
+        interval_start_timestamp = 0
+        if interval is not None and interval != "all":
+            interval_start_timestamp = interval_2_timestamp(interval, date_type="start")
+            logger.info(_("日期范围筛选：从 {} 开始").format(
+                timestamp_2_str(str(interval_start_timestamp)[:13])
+            ))
 
         logger.info(_("开始爬取收藏的推文"))
 
