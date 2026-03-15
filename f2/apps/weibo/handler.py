@@ -35,7 +35,7 @@ from f2.exceptions.api_exceptions import APINotFoundError, APIResponseError
 from f2.i18n.translator import _
 from f2.log.logger import logger
 from f2.utils.core.decorators import mode_function_map, mode_handler
-from f2.utils.time.timestamp import get_timestamp, timestamp_2_str
+from f2.utils.time.timestamp import get_timestamp, timestamp_2_str, interval_2_timestamp, str_2_timestamp
 
 rich_console = RichConsoleManager().rich_console
 rich_prompt = RichConsoleManager().rich_prompt
@@ -359,6 +359,15 @@ class WeiboHandler:
         max_counts = max_counts or float("inf")
         weibos_collected = 0
 
+        # 处理 interval 参数
+        interval = self.kwargs.get("interval")
+        interval_start_timestamp = 0
+        if interval is not None and interval != "all":
+            interval_start_timestamp = interval_2_timestamp(interval, date_type="start")
+            logger.info(_("日期范围筛选：从 {} 开始").format(
+                timestamp_2_str(str(interval_start_timestamp)[:13])
+            ))
+
         logger.info(_("处理用户：{0} 发布的微博").format(uid))
 
         while weibos_collected < max_counts:
@@ -374,6 +383,16 @@ class WeiboHandler:
                 response = await crawler.fetch_user_weibo(params)
                 weibo_data = UserWeiboFilter(response)
                 yield weibo_data
+
+            # 检查是否已经爬取到指定日期范围之前
+            if interval_start_timestamp > 0 and weibo_data.weibo_created_at:
+                # 获取当前页最后一条微博的创建时间
+                latest_create_time_str = weibo_data.weibo_created_at[-1] if weibo_data.weibo_created_at else ""
+                if latest_create_time_str:
+                    latest_timestamp = str_2_timestamp(latest_create_time_str, unit="milli")
+                    if latest_timestamp < interval_start_timestamp:
+                        logger.info(_("已经爬取到指定时间范围内的微博（最后一条：{0}）").format(latest_create_time_str))
+                        break
 
             # 更新已经处理的微博数量
             weibos_collected += len(weibo_data.weibo_id)
