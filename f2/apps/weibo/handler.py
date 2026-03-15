@@ -358,6 +358,7 @@ class WeiboHandler:
 
         max_counts = max_counts or float("inf")
         weibos_collected = 0
+        nickname_raw = ""  # 初始化变量，避免未定义错误
 
         logger.info(_("处理用户：{0} 发布的微博").format(uid))
 
