@@ -529,8 +529,16 @@ def cursor_to_timestamp(cursor_str: str) -> int:
         return 0
 
     try:
-        # Base64 解码
-        decoded = base64.b64decode(cursor_str)
+        # Base64 解码 - 添加 padding 修复
+        # Base64 字符串长度必须是 4 的倍数，否则需要添加 '=' padding
+        # 例如：66 % 4 = 2，需要添加 2 个 '='
+        padding_needed = len(cursor_str) % 4
+        if padding_needed:
+            cursor_str_padded = cursor_str + '=' * (4 - padding_needed)
+        else:
+            cursor_str_padded = cursor_str
+
+        decoded = base64.b64decode(cursor_str_padded)
         decoded_str = decoded.decode('latin-1')  # 使用 latin-1 解码以保留所有字节
 
         # 使用正则表达式提取数字字符串 (Twitter Snowflake ID)
