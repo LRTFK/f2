@@ -12,6 +12,7 @@ from f2.cli.cli_console import RichConsoleManager
 from f2.dl.base_downloader import BaseDownloader
 from f2.i18n.translator import _
 from f2.log.logger import logger
+from f2.utils.time.filter import filter_by_date_interval
 
 
 class WeiboDownloader(BaseDownloader):
@@ -53,6 +54,24 @@ class WeiboDownloader(BaseDownloader):
         weibo_datas_list = (
             [weibo_datas] if isinstance(weibo_datas, dict) else weibo_datas
         )
+
+        # 筛选指定日期区间内的作品
+        if kwargs.get("interval") is None:
+            logger.debug(_("未提供日期区间参数，将处理所有作品"))
+        elif kwargs.get("interval") != "all":
+            logger.debug(
+                _("开始按日期区间筛选作品：{0}").format(kwargs.get("interval"))
+            )
+            filtered_data = await filter_by_date_interval(
+                weibo_datas_list, str(kwargs.get("interval")), "weibo_created_at"
+            )
+            # 处理返回结果确保类型一致
+            if filtered_data is None:
+                weibo_datas_list = []
+            elif isinstance(filtered_data, dict):
+                weibo_datas_list = [filtered_data]
+            else:
+                weibo_datas_list = filtered_data
 
         # 使用 Rich 的 Live 管理器
         with Live(
