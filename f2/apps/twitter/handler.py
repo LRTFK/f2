@@ -239,9 +239,12 @@ class TwitterHandler:
         page_counts = self.kwargs.get("page_counts", 20)
         max_counts = self.kwargs.get("max_counts")
 
+        logger.debug(_("step1: -------------------------------------------------------------------"))
         uniqueID = await UniqueIdFetcher.get_unique_id(str(self.kwargs.get("url")))
+        logger.debug(_("step2: -------------------------------------------------------------------"))
         user = await self.fetch_user_profile(uniqueID)
 
+        logger.debug(_("step3: -------------------------------------------------------------------"))
         async with AsyncUserDB("twitter_users.db") as udb:
             user_path = await self.get_or_add_user_data(self.kwargs, uniqueID, udb)
 
@@ -249,6 +252,7 @@ class TwitterHandler:
             user.user_rest_id, page_counts, max_cursor, max_counts
         ):
             # 创建下载任务
+            logger.debug(_("step4: -------------------------------------------------------------------"))
             await self.downloader.create_download_tasks(
                 self.kwargs, tweet_list._to_list(), user_path
             )
