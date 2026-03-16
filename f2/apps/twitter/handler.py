@@ -275,6 +275,7 @@ class TwitterHandler:
 
         max_counts = max_counts or float("inf")
         tweets_collected = 0
+        nickname_raw = ""  # 初始化变量，避免未定义错误
 
         # 处理 interval 参数
         interval = self.kwargs.get("interval")
