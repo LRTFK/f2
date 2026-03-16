@@ -1,6 +1,7 @@
 # path: f2/apps/douyin/dl.py
 
 import asyncio
+import json
 import traceback
 from typing import Any, Dict, List, Optional, Union
 
@@ -69,6 +70,8 @@ class DouyinDownloader(BaseDownloader):
         aweme_datas_list = (
             [aweme_datas] if isinstance(aweme_datas, dict) else aweme_datas
         )
+
+        # logger.debug(_("所有作品：\n{0}").format(json.dumps(aweme_datas_list, indent=2, ensure_ascii=False)))
 
         # 筛选指定日期区间内的作品
         if kwargs.get("interval") is None:

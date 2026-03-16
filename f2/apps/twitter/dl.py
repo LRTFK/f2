@@ -1,6 +1,7 @@
 # path: f2/apps/twitter/dl.py
 
 import asyncio
+import json
 from typing import Any, Union
 
 from rich.live import Live
@@ -51,6 +52,8 @@ class TwitterDownloader(BaseDownloader):
         tweet_datas_list = (
             [tweet_datas] if isinstance(tweet_datas, dict) else tweet_datas
         )
+
+        # logger.debug(_("所有作品：\n{0}").format(json.dumps(tweet_datas_list, indent=2, ensure_ascii=False)))
 
         # 筛选指定日期区间内的推文
         if kwargs.get("interval") is None:
