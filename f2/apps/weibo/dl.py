@@ -1,6 +1,7 @@
 # path: f2/apps/weibo/dl.py
 
 import asyncio
+import json
 from typing import Any, Dict, List, Optional, Union
 
 from rich.live import Live
@@ -54,6 +55,8 @@ class WeiboDownloader(BaseDownloader):
         weibo_datas_list = (
             [weibo_datas] if isinstance(weibo_datas, dict) else weibo_datas
         )
+
+        # logger.debug(_("所有作品：\n{0}").format(json.dumps(weibo_datas_list, indent=2, ensure_ascii=False)))
 
         # 筛选指定日期区间内的作品
         if kwargs.get("interval") is None:
