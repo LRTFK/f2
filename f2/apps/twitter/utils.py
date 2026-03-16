@@ -518,13 +518,33 @@ def cursor_to_timestamp(cursor_str: str) -> int:
         int: 毫秒时间戳，如果解码失败返回 0
 
     Note:
-        Twitter Snowflake ID 结构:
-        - 64 位整数
+        Twitter Snowflake ID 结构 (64 位):
+        - 1 位未使用
         - 41 位时间戳 (毫秒级，相对于 Twitter epoch)
         - 10 位机器 ID
         - 12 位序列号
         Twitter epoch: 1288834974657 (2010-11-04 01:42:54.657 UTC)
+
+    解密步骤示例:
+        1. Base64 解码 (需添加 padding 使长度为 4 的倍数)
+           cursor: 'DAAHCgAB...EAAA' (66 字符)
+           填充后：'DAAHCgAB...EAAA==' (68 字符)
+
+        2. 字节转字符串 (使用 latin-1 保留所有字节)
+           decoded: b"\x0c\x00...\x132033371544584626477\x08..."
+           包含控制字符和可读的 Snowflake ID 数字字符串
+
+        3. 正则提取 Snowflake ID
+           匹配 15-20 位数字：2033371544584626477
+
+        4. 位运算转换时间戳
+           snowflake_id >> 22 = 484793554445 (去掉 10 位机器 ID + 12 位序列号)
+           + 1288834974657 (Twitter epoch)
+           = 1773628529102 (毫秒时间戳)
     """
+
+    logger.debug(_("----cursor_str: '{0}'").format(str(cursor_str)))
+
     if not cursor_str:
         return 0
 
@@ -539,16 +559,23 @@ def cursor_to_timestamp(cursor_str: str) -> int:
             cursor_str_padded = cursor_str
 
         decoded = base64.b64decode(cursor_str_padded)
+        # logger.debug(_("----decoded: '{0}'").format(str(decoded)))
         decoded_str = decoded.decode('latin-1')  # 使用 latin-1 解码以保留所有字节
+        # logger.debug(_("----decoded_str: '{0}'").format(str(decoded_str)))
 
         # 使用正则表达式提取数字字符串 (Twitter Snowflake ID)
+        # Snowflake ID 是 15-20 位的数字，embedded 在解码后的字符串中
+        # 周围可能包含二进制控制字符
         match = re.search(r'(\d{15,20})', decoded_str)
         if match:
             snowflake_id = int(match.group(1))
 
             # Twitter Snowflake ID 转时间戳
-            # 右移 22 位获取时间戳部分
+            # 右移 22 位：去掉低位的 10 位机器 ID + 12 位序列号，保留 41 位时间戳
+            # 加上 Twitter epoch (1288834974657) 转换为标准 Unix 时间戳
             timestamp_ms = (snowflake_id >> 22) + 1288834974657
+
+            logger.debug(_("----timestamp_ms: '{0}'").format(str(timestamp_ms)))
             return timestamp_ms
         else:
             logger.debug(_("cursor 中未找到有效的 Snowflake ID: {0}").format(cursor_str[:50]))
