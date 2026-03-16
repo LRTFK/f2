@@ -273,6 +273,7 @@ class TwitterHandler:
 
         max_counts = max_counts or float("inf")
         tweets_collected = 0
+        nickname_raw = ""  # 初始化变量，避免未定义错误
 
         logger.info(_("开始爬取用户：{0} 发布的推文").format(userId))
 
