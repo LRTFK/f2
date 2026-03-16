@@ -1,6 +1,7 @@
 # path: f2/utils/time/filter.py
 
 import datetime
+import json
 from typing import Dict, List, Union
 
 from f2.i18n.translator import _
@@ -25,6 +26,8 @@ async def filter_by_date_interval(
     """
 
     def is_within_interval(item: Dict) -> bool:
+        logger.debug(_("所有作品：\n{0}").format(json.dumps(item, indent=2, ensure_ascii=False)))
+
         date_str = item.get(field_name)
         if not date_str:
             # 改进调试信息，只显示关键字段避免日志过长
@@ -41,6 +44,7 @@ async def filter_by_date_interval(
             logger.warning(_("无法解析作品的创建时间：{0}").format(date_str))
             return False
 
+        # logger.debug(_("作品时间字段: '{0}'").format(date))
         if date < start_date or date > end_date:
             return False
 
