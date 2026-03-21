@@ -20,6 +20,7 @@ from f2.utils.http.browser import get_cookie_from_browser
 from f2.utils.http.cookie import split_dict_cookie
 from f2.utils.http.proxy import check_proxy_avail
 from f2.utils.string.validator import check_invalid_naming
+from f2.utils.batch_utils import read_urls_from_file
 
 
 def handler_help(
@@ -186,6 +187,12 @@ def validate_proxies(
     help=_("根据模式提供相应的链接"),
 )
 @click.option(
+    "--batch",
+    "-b",
+    type=click.Path(file_okay=True, dir_okay=False, readable=True),
+    help=_("URL 文件路径，支持.txt 或.csv 格式，与--url 互斥"),
+)
+@click.option(
     "--path",
     "-p",
     type=str,
@@ -294,6 +301,7 @@ def twitter(
     config: str,
     init_config: str,
     update_config: bool,
+    batch: str,
     **kwargs,
 ) -> None:
     # 读取低频主配置文件
@@ -362,6 +370,15 @@ def twitter(
     # 从低频配置开始到高频配置再到cli参数，逐级覆盖，如果键值不存在使用父级的键值
     kwargs = merge_config(main_conf, custom_conf, **kwargs)
 
+    # 处理批量模式
+    if batch:
+        # 检查是否与--url 互斥
+        if kwargs.get("url"):
+            raise click.UsageError(_("不能同时使用 `--batch` 和 `--url` 选项"))
+
+        _process_batch_urls(ctx, kwargs, batch, main_conf_path, config, main_conf, custom_conf)
+        return
+
     # 添加代理验证逻辑
     proxy_config = kwargs.get("proxies", {})
     if proxy_config and isinstance(proxy_config, dict):
@@ -405,3 +422,72 @@ def twitter(
     # 添加app_name到kwargs
     kwargs["app_name"] = "twitter"
     ctx.invoke(set_cli_config, **kwargs)
+
+
+def _process_batch_urls(
+    ctx: click.Context,
+    base_kwargs: dict,
+    url_file: str,
+    main_conf_path: str,
+    config: str,
+    main_conf: dict,
+    custom_conf: dict,
+) -> None:
+    """批量处理 URL 列表 (Process URL list in batch)
+
+    Args:
+        ctx: click 的上下文对象 (Click's context object)
+        base_kwargs: 基础配置参数 (Base configuration parameters)
+        url_file: URL 文件路径 (URL file path)
+        main_conf_path: 主配置文件路径 (Main config file path)
+        config: 自定义配置文件路径 (Custom config file path)
+        main_conf: 主配置字典 (Main config dictionary)
+        custom_conf: 自定义配置字典 (Custom config dictionary)
+    """
+    import time
+    from datetime import timedelta
+
+    # 读取 URL 列表
+    urls = read_urls_from_file(url_file)
+
+    if not urls:
+        logger.error(_("URL 文件为空"))
+        return
+
+    start_time = time.time()
+    success_count = 0
+    fail_count = 0
+
+    for index, url in enumerate(urls, 1):
+        elapsed = timedelta(seconds=int(time.time() - start_time))
+        display_url = url[:50] + "..." if len(url) > 50 else url
+        logger.info(
+            _("[Batch] 正在处理 {0}/{1} (已运行：{2}) - {3}").format(
+                index, len(urls), elapsed, display_url
+            )
+        )
+
+        try:
+            # 为每个 URL 创建独立的配置副本
+            kwargs = base_kwargs.copy()
+            kwargs["url"] = url
+
+            # 重新合并配置以确保每个 URL 都使用正确的配置
+            kwargs = merge_config(main_conf, custom_conf, **kwargs)
+
+            # 添加 app_name 到 kwargs
+            kwargs["app_name"] = "twitter"
+
+            ctx.invoke(set_cli_config, **kwargs)
+            success_count += 1
+        except Exception as e:
+            trace_logger.error(traceback.format_exc())
+            logger.error(_("处理 URL 失败：{0} - {1}").format(url, str(e)))
+            fail_count += 1
+
+    elapsed = timedelta(seconds=int(time.time() - start_time))
+    logger.info(
+        _("[Batch] 完成：成功 {0}/{1}, 失败 {2}/{1}, 总耗时：{3}").format(
+            success_count, len(urls), fail_count, elapsed
+        )
+    )
