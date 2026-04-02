@@ -393,10 +393,9 @@ def bark(
 
     # 处理批量模式
     if batch:
-        # 检查是否与--url 互斥
+        # 当同时指定 --batch 和 --url 时，优先使用 --batch 文件中的 URL 列表
         if kwargs.get("url"):
-            raise click.UsageError(_("不能同时使用 `--batch` 和 `--url` 选项"))
-
+            logger.warning(_("同时指定了 --batch 和 --url，将忽略 --url 参数，仅使用 --batch 文件中的 URL 列表"))
         _process_batch_urls(ctx, kwargs, batch, main_conf_path, config, main_conf, custom_conf)
         return
 
