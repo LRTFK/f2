@@ -1,0 +1,11 @@
+# F2 批量运行示例文件 (.txt 格式)
+# 说明：
+# 1. 每行一个 URL
+# 2. 支持 # 开头的注释行
+# 3. 空行会被自动忽略
+# 4. 使用示例：f2 dy -c dy.yaml -b examples/batch_urls.txt
+
+https://www.douyin.com/user/MS4wLjABAAAA...
+https://www.douyin.com/user/MS4wLjABBBBB...
+https://www.douyin.com/video/123456789
+https://www.douyin.com/search/关键词？search_id=xxx
