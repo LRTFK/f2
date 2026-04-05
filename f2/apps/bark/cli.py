@@ -16,7 +16,7 @@ from f2.utils.config.merge import merge_config
 from f2.utils.core.adapters import adapt_validation_call
 from f2.utils.file.path import get_resource_path
 from f2.utils.http.proxy import check_proxy_avail
-from f2.utils.batch_utils import read_urls_from_file
+from f2.utils.batch_utils import read_urls_from_file, apply_order_to_urls
 
 
 def handler_help(
@@ -279,6 +279,13 @@ def validate_proxies(
     help=_("URL 文件路径，支持.txt 或.csv 格式，与--url 互斥"),
 )
 @click.option(
+    "--order",
+    "-O",
+    type=click.Choice(["asc", "desc", "random"]),
+    default="asc",
+    help=_("URL 执行顺序：asc=顺序，desc=倒序，random=随机"),
+)
+@click.option(
     "--proxies",
     "-P",
     type=str,
@@ -312,6 +319,7 @@ def bark(
     init_config: str,
     update_config: bool,
     batch: str,
+    order: str,
     **kwargs,
 ):
     ##################
@@ -396,7 +404,7 @@ def bark(
         # 当同时指定 --batch 和 --url 时，优先使用 --batch 文件中的 URL 列表
         if kwargs.get("url"):
             logger.warning(_("同时指定了 --batch 和 --url，将忽略 --url 参数，仅使用 --batch 文件中的 URL 列表"))
-        _process_batch_urls(ctx, kwargs, batch, main_conf_path, config, main_conf, custom_conf)
+        _process_batch_urls(ctx, kwargs, batch, order, main_conf_path, config, main_conf, custom_conf)
         return
 
     # 添加代理验证逻辑（使用新格式）
@@ -466,6 +474,7 @@ def _process_batch_urls(
     ctx: click.Context,
     base_kwargs: dict,
     url_file: str,
+    order: str,
     main_conf_path: str,
     config: str,
     main_conf: dict,
@@ -477,6 +486,7 @@ def _process_batch_urls(
         ctx: click 的上下文对象 (Click's context object)
         base_kwargs: 基础配置参数 (Base configuration parameters)
         url_file: URL 文件路径 (URL file path)
+        order: URL 执行顺序 (URL execution order)
         main_conf_path: 主配置文件路径 (Main config file path)
         config: 自定义配置文件路径 (Custom config file path)
         main_conf: 主配置字典 (Main config dictionary)
@@ -486,9 +496,12 @@ def _process_batch_urls(
     from datetime import timedelta
 
     # 读取 URL 列表
-    urls = read_urls_from_file(url_file)
+    url_data = read_urls_from_file(url_file)
 
-    if not urls:
+    # 根据 order 参数处理 URL 列表
+    url_data = apply_order_to_urls(url_data, order)
+
+    if not url_data:
         logger.error(_("URL 文件为空"))
         return
 
@@ -496,14 +509,20 @@ def _process_batch_urls(
     success_count = 0
     fail_count = 0
 
-    for index, url in enumerate(urls, 1):
+    for index, url_item in enumerate(url_data, 1):
         elapsed = timedelta(seconds=int(time.time() - start_time))
-        display_url = url[:50] + "..." if len(url) > 50 else url
-        logger.info(
-            _("[Batch] 正在处理 {0}/{1} (已运行：{2}) - {3}").format(
-                index, len(urls), elapsed, display_url
-            )
-        )
+        url = url_item["url"]
+        note = url_item.get("note", "")
+
+        # 构建进度显示信息
+        progress_info = f"[Batch] {index}/{len(url_data)}"
+        if note:
+            progress_info += f" - [{note}]"
+        else:
+            display_url = url[:50] + "..." if len(url) > 50 else url
+            progress_info += f" - {display_url}"
+
+        logger.info(_("{0} (已运行：{1}) - 处理中...").format(progress_info, elapsed))
 
         try:
             # 为每个 URL 创建独立的配置副本
@@ -526,6 +545,6 @@ def _process_batch_urls(
     elapsed = timedelta(seconds=int(time.time() - start_time))
     logger.info(
         _("[Batch] 完成：成功 {0}/{1}, 失败 {2}/{1}, 总耗时：{3}").format(
-            success_count, len(urls), fail_count, elapsed
+            success_count, len(url_data), fail_count, elapsed
         )
     )
