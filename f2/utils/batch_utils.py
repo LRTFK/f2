@@ -83,21 +83,34 @@ def _read_txt_file(path: Path) -> typing.List[dict]:
 
 def _read_csv_file(path: Path) -> typing.List[dict]:
     """读取 CSV 文件，必须包含 url 列"""
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except PermissionError:
-        raise PermissionError(_("无权限读取文件：{0}").format(path))
-    except UnicodeDecodeError:
+    # 尝试不同的编码读取文件
+    content = None
+    used_encoding = "utf-8"
+
+    for encoding in ("utf-8", "gbk"):
         try:
-            with open(path, "r", encoding="gbk") as f:
+            with open(path, "r", encoding=encoding) as f:
                 content = f.read()
-        except Exception:
+            used_encoding = encoding
+            break
+        except (PermissionError, UnicodeDecodeError):
+            continue
+
+    if content is None:
+        if not path.is_file():
+            raise PermissionError(_("无权限读取文件：{0}").format(path))
+        else:
             raise ValueError(_("文件编码不支持，请使用 UTF-8 或 GBK 编码"))
 
     try:
-        # 重新打开文件供 csv 模块读取
-        with open(path, "r", encoding="utf-8" if content.isascii() else "gbk") as f:
+        # 使用成功读取时的编码重新打开文件供 csv 模块读取
+        with open(path, "r", encoding=used_encoding) as f:
+            # 过滤掉注释行（以 # 开头的行）
+            lines = [line for line in f if not line.strip().startswith("#")]
+
+        # 使用过滤后的内容创建 CSV reader
+        import io
+        with io.StringIO("".join(lines)) as f:
             reader = csv.DictReader(f)
             if reader.fieldnames is None:
                 raise ValueError(_("CSV 文件为空或没有表头"))
