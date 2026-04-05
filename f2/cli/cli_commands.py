@@ -10,6 +10,7 @@ import click
 import f2
 from f2 import helps
 from f2.apps import __apps__ as apps_module
+from f2.cli.batch_command import batch
 from f2.cli.cli_console import RichConsoleManager
 from f2.cli.wizard_command import config_wizard_command
 from f2.i18n.translator import TranslationManager, _
@@ -149,6 +150,7 @@ class DynamicGroup(click.Group):
         super().__init__(*args, **kwargs)
         # 添加内置命令
         self.add_command(config_wizard_command)
+        self.add_command(batch)
 
     def list_commands(self, ctx):
         """列出所有可用命令"""
