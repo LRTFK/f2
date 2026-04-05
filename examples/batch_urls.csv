@@ -1,5 +1,11 @@
 url,note,category
 https://www.douyin.com/user/MS4wLjABAAAA...,用户 A 主页 (美食博主),美食
 https://www.douyin.com/user/MS4wLjABBBBB...,用户 B 主页 (科技博主),科技
-https://www.douyin.com/video/123456789，单个视频 (收藏),视频
-https://www.douyin.com/search/关键词？search_id=xxx，搜索结果 (旅行攻略),搜索
+https://www.douyin.com/video/123456789,单个视频 (收藏),视频
+https://www.douyin.com/search/关键词？search_id=xxx,搜索结果 (旅行攻略),搜索
+
+# 说明：
+# 1. url 列为必需，其他列为可选备注
+# 2. 备注信息会在批量处理时显示，方便识别
+# 3. 支持 .txt / .csv / .xlsx / .xls 格式
+# 4. 使用示例：f2 dy -c dy.yaml -b examples/batch_urls.csv --order random
