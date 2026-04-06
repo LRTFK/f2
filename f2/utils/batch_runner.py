@@ -99,7 +99,8 @@ class BatchRunner:
 
                 for row in reader:
                     url = row.get(url_column, "").strip()
-                    if url:
+                    # 跳过以#开头的注释行和空行
+                    if url and not url.startswith("#"):
                         urls.append({"url": url})
         except UnicodeDecodeError:
             # 尝试其他编码
@@ -113,7 +114,8 @@ class BatchRunner:
 
                 for row in reader:
                     url = row.get(url_column, "").strip()
-                    if url:
+                    # 跳过以#开头的注释行和空行
+                    if url and not url.startswith("#"):
                         urls.append({"url": url})
 
         logger.info(_("从 {0} 读取到 {1} 个 URL").format(path, len(urls)))
@@ -138,7 +140,8 @@ class BatchRunner:
             df = df.rename(columns={df.columns[0]: "url"})
 
         urls = df["url"].dropna().tolist()
-        result = [{"url": str(url)} for url in urls if str(url).strip()]
+        # 跳过以#开头的注释行和空行
+        result = [{"url": str(url)} for url in urls if str(url).strip() and not str(url).strip().startswith("#")]
         logger.info(_("从 {0} 读取到 {1} 个 URL").format(path, len(result)))
         return result
 
