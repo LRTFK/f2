@@ -193,6 +193,15 @@ def _read_excel_file(path: Path) -> typing.List[dict]:
             if all(cell is None or str(cell).strip() == "" for cell in row):
                 continue
 
+            # 跳过注释行（第一个非空单元格以 # 开头）
+            first_non_empty = None
+            for cell in row:
+                if cell is not None and str(cell).strip():
+                    first_non_empty = str(cell).strip()
+                    break
+            if first_non_empty and first_non_empty.startswith("#"):
+                continue
+
             url_value = row[url_col_idx] if url_col_idx < len(row) else None
             if url_value and str(url_value).strip():
                 url_value = str(url_value).strip()
