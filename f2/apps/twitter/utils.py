@@ -24,6 +24,7 @@ from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
 from f2.utils.config.conf_manager import ConfigManager
 from f2.utils.file.name import split_filename
+from f2.utils.file.user_storage import ensure_user_storage
 from f2.utils.string.formatter import extract_valid_urls
 from f2.utils.time.timestamp import str_2_timestamp
 
@@ -392,7 +393,10 @@ def format_file_name(
 
 
 def create_or_rename_user_folder(
-    kwargs: dict, local_user_data: dict, current_nickname: str
+    kwargs: dict,
+    local_user_data: dict,
+    user_unique_id: str,
+    current_nickname: str,
 ) -> Path:
     """
     创建或重命名用户目录 (Create or rename user directory)
@@ -405,26 +409,33 @@ def create_or_rename_user_folder(
     Returns:
         user_path (Path): 用户目录路径 (User directory path)
     """
-    user_path = create_user_folder(kwargs, current_nickname)
+    legacy_nicknames = [current_nickname]
+    if local_user_data:
+        legacy_nicknames.append(local_user_data.get("nickname"))
 
-    if not local_user_data:
-        return user_path
-
-    if local_user_data.get("nickname") != current_nickname:
-        # 昵称不一致，触发目录更新操作
-        user_path = rename_user_folder(user_path, current_nickname)
-
-    return user_path
+    return create_user_folder(
+        kwargs,
+        user_unique_id=user_unique_id,
+        current_nickname=current_nickname,
+        legacy_nicknames=legacy_nicknames,
+    )
 
 
-def create_user_folder(kwargs: dict, nickname: Union[str, int]) -> Path:
+def create_user_folder(
+    kwargs: dict,
+    user_unique_id: Union[str, int],
+    current_nickname: Union[str, int, None],
+    legacy_nicknames: list[Union[str, int, None]] | None = None,
+) -> Path:
     """
-    根据提供的配置文件和昵称，创建对应的保存目录。
-    (Create the corresponding save directory according to the provided conf file and nickname.)
+    根据提供的配置文件创建用户唯一ID真实目录和昵称链接目录。
+    (Create user unique-id storage directory and nickname link directory.)
 
     Args:
         kwargs (dict): 配置文件，字典格式。(Conf file, dict format)
-        nickname (Union[str, int]): 用户的昵称，允许字符串或整数。  (User nickname, allow strings or integers)
+        user_unique_id (Union[str, int]): 用户唯一ID。 (User unique id)
+        current_nickname (Union[str, int, None]): 当前昵称。 (Current nickname)
+        legacy_nicknames (list): 可能存在的历史昵称列表。 (Legacy nicknames)
 
     Note:
         如果未在配置文件中指定路径，则默认为 "Download"。
@@ -437,25 +448,13 @@ def create_user_folder(kwargs: dict, nickname: Union[str, int]) -> Path:
         (If kwargs is not in dict format, TypeError will be raised.)
     """
 
-    # 确定函数参数是否正确
-    if not isinstance(kwargs, dict):
-        raise TypeError("kwargs 参数必须是字典")
-
-    # 创建基础路径
-    base_path = Path(kwargs.get("path", "Download"))
-
-    # 添加下载模式和用户名
-    user_path = (
-        base_path / "twitter" / kwargs.get("mode", "PLEASE_SETUP_MODE") / str(nickname)
+    return ensure_user_storage(
+        kwargs=kwargs,
+        platform="twitter",
+        user_unique_id=user_unique_id,
+        current_nickname=current_nickname,
+        legacy_nicknames=legacy_nicknames,
     )
-
-    # 获取绝对路径并确保它存在
-    resolve_user_path = user_path.resolve()
-
-    # 创建目录
-    resolve_user_path.mkdir(parents=True, exist_ok=True)
-
-    return resolve_user_path
 
 
 def rename_user_folder(old_path: Path, new_nickname: str) -> Path:
@@ -469,13 +468,8 @@ def rename_user_folder(old_path: Path, new_nickname: str) -> Path:
     Returns:
         Path: 重命名后的用户目录路径 (Path of the renamed user folder)
     """
-    # 获取目标目录的父目录 (Get the parent directory of the target folder)
-    parent_directory = old_path.parent
-
-    # 构建新目录路径 (Construct the new directory path)
-    new_path = old_path.rename(parent_directory / new_nickname).resolve()
-
-    return new_path
+    # 保留兼容旧调用，新的目录策略已不再执行重命名。
+    return old_path
 
 
 import base64
