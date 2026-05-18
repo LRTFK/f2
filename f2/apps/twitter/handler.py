@@ -134,7 +134,7 @@ class TwitterHandler:
 
         # 设置用户目录
         user_path = create_or_rename_user_folder(
-            kwargs, local_user_data, current_nickname
+            kwargs, local_user_data, uniqueId, current_nickname
         )
 
         # 如果用户不在数据库中，将其添加到数据库
