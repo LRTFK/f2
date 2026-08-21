@@ -122,16 +122,34 @@ class TweetDetailFilter(JSONModel):
             media_urls = [media_urls]
         return media_urls
 
-    # 视频链接（清晰度依次提高）
+    # 视频链接（每个视频取最高码率的 mp4 变体，共 {媒体数} 个 URL）
     @property
     def tweet_video_url(self):
-        all_urls = self._get_attr_value(
-            "$.data.threaded_conversation_with_injections_v2.instructions[*].entries[*].content.itemContent.tweet_results.result.legacy.extended_entities.media[*].video_info.variants[*].url"
+        media_list = self._get_attr_value(
+            "$.data.threaded_conversation_with_injections_v2.instructions[*].entries[*].content.itemContent.tweet_results.result.legacy.extended_entities.media"
         )
-        if all_urls is None:
+        if not media_list:
             return []
-        # 剔除包含 `.m3u8` 的链接
-        return [url for url in all_urls if ".m3u8" not in url]
+        if isinstance(media_list, dict):
+            media_list = [media_list]
+
+        urls = []
+        for media in media_list:
+            if not isinstance(media, dict):
+                continue
+            variants = (media.get("video_info") or {}).get("variants") or []
+            mp4_variants = [
+                v
+                for v in variants
+                if isinstance(v, dict)
+                and v.get("content_type") == "video/mp4"
+                and ".m3u8" not in (v.get("url") or "")
+            ]
+            if not mp4_variants:
+                continue
+            best = max(mp4_variants, key=lambda v: v.get("bitrate") or 0)
+            urls.append(best["url"])
+        return urls
 
     # 视频时长
     @property

@@ -157,12 +157,19 @@ class TwitterDownloader(BaseDownloader):
             + "_video"
         )
 
-        if isinstance(self.tweet_video_url, list):
-            self.tweet_video_url = self.tweet_video_url[-1]  # 如果是列表，取第一个元素
-
-        await self.initiate_download(
-            _("视频"), self.tweet_video_url, self.base_path, video_name, ".mp4"
+        video_urls = (
+            [self.tweet_video_url]
+            if isinstance(self.tweet_video_url, str)
+            else self.tweet_video_url
         )
+        video_urls = [url for url in video_urls if url]
+
+        # 多条视频逐一下载，文件名追加序号区分
+        for i, video_url in enumerate(video_urls):
+            name = video_name if len(video_urls) == 1 else f"{video_name}_{i + 1}"
+            await self.initiate_download(
+                _("视频"), video_url, self.base_path, name, ".mp4"
+            )
 
     async def download_images(self):
         if not self.tweet_media_url:
