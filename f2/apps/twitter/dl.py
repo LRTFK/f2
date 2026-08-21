@@ -130,10 +130,17 @@ class TwitterDownloader(BaseDownloader):
         # logger.info(tweet_data_dict)
         # logger.info("===================================")
 
+        # 兼容 tweet_media_type 为 str 或 list 两种形式（多视频推文为 list）
+        media_types = (
+            [self.tweet_media_type]
+            if isinstance(self.tweet_media_type, str)
+            else (self.tweet_media_type or [])
+        )
+
         # 动图属于视频类型
-        if self.tweet_media_type in ["video", "animated_gif"]:
+        if any(t in ("video", "animated_gif") for t in media_types):
             await self.download_video()
-        elif self.tweet_media_type and "photo" in self.tweet_media_type:
+        elif any(t and "photo" in t for t in media_types):
             await self.download_images()
 
         await self.download_desc()
