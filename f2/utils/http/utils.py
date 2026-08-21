@@ -59,12 +59,17 @@ async def get_content_length(
     if headers:
         optimized_headers.update(headers)
 
+    # 显式配置代理时使用指定代理；未配置时信任环境变量代理
+    # （与下载流 self.aclient 的行为保持一致）
+    transport = (
+        httpx.AsyncHTTPTransport(retries=2, proxy=proxy_url)
+        if proxy_url is not None
+        else None
+    )
+
     async with httpx.AsyncClient(
         timeout=timeout_config,
-        transport=httpx.AsyncHTTPTransport(
-            retries=2,
-            proxy=proxy_url,
-        ),
+        transport=transport,
         verify=False,
         follow_redirects=True,
         limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
