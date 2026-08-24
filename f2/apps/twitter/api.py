@@ -12,16 +12,16 @@ class TwitterAPIEndpoints:
     API_DOMAIN = "https://x.com/i/api/graphql"
 
     # User Detail
-    USER_PROFILE = f"{API_DOMAIN}/laYnJPCAcVo0o6pzcnlVxQ/UserByScreenName"
+    USER_PROFILE = f"{API_DOMAIN}/Gb-d6r0vxPOADdG62OEBpQ/UserByScreenName"
 
     # User Post
-    USER_POST = f"{API_DOMAIN}/Tg82Ez_kxVaJf7OPbUdbCg/UserTweets"
+    USER_POST = f"{API_DOMAIN}/SXVCYB8XHSS25nzIljNtZA/UserTweets"
 
     # User Like
-    USER_LIKE = f"{API_DOMAIN}/px6_YxfWkXo0odY84iqqmw/Likes"
+    USER_LIKE = f"{API_DOMAIN}/xA8fDIbrJfy4ojjjXmSR-A/Likes"
 
     # User Bookmark
-    USER_BOOKMARK = f"{API_DOMAIN}/L7vvM2UluPgWOW4GDvWyvw/Bookmarks"
+    USER_BOOKMARK = f"{API_DOMAIN}/iblrFnKr6PZUR-dWpfXG6g/Bookmarks"
 
     # Post Detail
-    POST_DETAIL = f"{API_DOMAIN}/nBS-WpgA6ZG0CyNHD517JQ/TweetDetail"
+    POST_DETAIL = f"{API_DOMAIN}/XMOz5h24KAZ86qKffKTLdQ/TweetDetail"
