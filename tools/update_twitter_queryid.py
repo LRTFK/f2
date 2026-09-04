@@ -17,7 +17,8 @@
 #   .venv/Scripts/python.exe tools/update_twitter_queryid.py            # 仅打印映射
 #   .venv/Scripts/python.exe tools/update_twitter_queryid.py --patch    # 提取并回写 api.py
 #
-# 依赖 cookie：从项目 twi_like.yaml 或 --cookie-file 指定（X 仅向登录态提供完整 bundle）。
+# 依赖 cookie：优先读取项目内 twi*.yaml，其次 f2/conf/conf.yaml，也可 --cookie-file
+# 指定（X 仅向登录态提供完整 bundle）。均未找到时给出警告。
 
 import argparse
 import re
@@ -56,13 +57,20 @@ _ENDPOINT_LINE_TPL = r"({endpoint} = f\"{{API_DOMAIN}}/)[^/]+(/{op}\")"
 
 
 def load_cookie_from_yaml(path: Path) -> str:
-    """从 f2 配置 yaml 中读取 twitter.cookie。"""
+    """从 f2 配置 yaml 中读取 twitter.cookie，兼容多级嵌套结构。"""
     _yaml = YAML(typ="safe")
     with open(path, encoding="utf-8") as f:
         data = _yaml.load(f)
-    for key in ("twitter", "f2"):
-        if isinstance(data, dict) and key in data:
-            data = data[key]
+    # 逐层下钻 twitter / f2 容器，兼容 conf.yaml 的 f2: → twitter: → cookie: 两层嵌套
+    for _ in range(3):
+        if not isinstance(data, dict) or "cookie" in data:
+            break
+        for key in ("twitter", "f2"):
+            if key in data:
+                data = data[key]
+                break
+        else:
+            break
     return data["cookie"] if isinstance(data, dict) and "cookie" in data else ""
 
 
@@ -145,7 +153,7 @@ def main() -> int:
     parser.add_argument(
         "--cookie-file",
         default=None,
-        help="包含 twitter.cookie 的 yaml 文件（默认自动探测项目内 twi_like.yaml / conf.yaml）",
+        help="包含 twitter.cookie 的 yaml 文件（默认自动探测项目内 twi*.yaml / conf.yaml）",
     )
     parser.add_argument(
         "--api-path",
@@ -156,11 +164,12 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    # 解析 cookie
+    # 解析 cookie：优先 --cookie-file，其次项目内 twi*.yaml，最后 conf.yaml
     cookie = ""
     candidates = [args.cookie_file] if args.cookie_file else []
     root = Path(__file__).resolve().parent.parent
-    candidates += [str(root / "twi_like.yaml"), str(root / "f2" / "conf" / "conf.yaml")]
+    candidates += sorted(str(p) for p in root.glob("twi*.yaml"))
+    candidates.append(str(root / "f2" / "conf" / "conf.yaml"))
     for c in candidates:
         if c and Path(c).exists():
             try:
@@ -169,6 +178,12 @@ def main() -> int:
                     break
             except Exception:
                 continue
+    if not cookie:
+        print(
+            "警告: 未在 twi*.yaml / conf.yaml 中找到 twitter.cookie，"
+            "可能无法提取完整 queryId，可用 --cookie-file 显式指定",
+            file=sys.stderr,
+        )
 
     headers = {
         "User-Agent": USER_AGENT,
