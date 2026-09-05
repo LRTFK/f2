@@ -19,7 +19,7 @@ async def get_content_length(
     url: str,
     headers: Optional[dict] = None,
     proxies: Optional[dict] = None,
-    max_retries: int = 3,
+    max_retries: int = 2,
 ) -> int:
     """
     获取给定URL的Content-Length，使用HEAD请求重试，失败后退避到GET请求
@@ -43,7 +43,7 @@ async def get_content_length(
 
     timeout_config = httpx.Timeout(
         connect=10.0,  # 连接超时
-        read=30.0,  # 读取超时
+        read=10.0,  # 读取超时
         write=10.0,  # 写入超时
         pool=10.0,  # 连接池超时
     )
@@ -98,7 +98,7 @@ async def get_content_length(
                 httpx.ReadTimeout,
             ) as e:
                 if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2  # 递增等待时间
+                    wait_time = attempt
                     logger.warning(
                         _("HEAD请求超时，{0} 秒后重试 ({1}/{2})：{3}").format(
                             wait_time, attempt + 1, max_retries, url
@@ -123,7 +123,7 @@ async def get_content_length(
                     )
                     break
                 elif attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2
+                    wait_time = attempt
                     logger.warning(
                         _(
                             "HEAD请求HTTP错误：{0}，状态码：{1}，{2} 秒后重试 ({3}/{4})"
@@ -147,7 +147,7 @@ async def get_content_length(
 
             except Exception as e:
                 if attempt < max_retries - 1:
-                    wait_time = (attempt + 1) * 2
+                    wait_time = attempt
                     logger.warning(
                         _("HEAD请求发生错误，{0}秒后重试 ({1}/{2})：{3}").format(
                             wait_time, attempt + 1, max_retries, str(e)
