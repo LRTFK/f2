@@ -2,7 +2,7 @@
 
 from typing import Any, List, Optional, Tuple
 
-from f2.apps.twitter.utils import best_mp4_url, extract_desc, sort_mp4_urls
+from f2.apps.twitter.utils import best_mp4_url, extract_desc
 from f2.utils.json.filter import JSONModel, filter_to_list
 from f2.utils.string.formatter import replaceT
 from f2.utils.time.timestamp import timestamp_2_str
@@ -152,14 +152,25 @@ class TweetDetailFilter(JSONModel):
             media_urls = [media_urls]
         return media_urls
 
-    # 视频链接：只保留 MP4，按码率从低到高排列，下载时取最后一个（#436）
+    # 视频链接：每个视频取各自码率最高的 MP4，按媒体顺序排列，多视频推文逐个下载
     @property
     def tweet_video_url(self):
-        return sort_mp4_urls(
-            self._get_attr_value(
-                f"{self._result_path}.legacy.extended_entities.media[*].video_info.variants[*]"
-            )
+        media_list = self._get_attr_value(
+            f"{self._result_path}.legacy.extended_entities.media"
         )
+
+        if not isinstance(media_list, list):
+            return []
+
+        return [
+            url
+            for url in (
+                best_mp4_url((media.get("video_info") or {}).get("variants"))
+                for media in media_list
+                if isinstance(media, dict)
+            )
+            if url
+        ]
 
     # 视频时长
     @property

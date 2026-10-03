@@ -27,16 +27,28 @@ CURSORS = [
     {"entryId": "cursor-top-1", "content": {"cursorType": "Top", "value": "TOP"}},
     {"entryId": "cursor-bottom-1", "content": {"cursorType": "Bottom", "value": "BOT"}},
 ]
+# 第二条视频的变体：码率更高且 m3u8 在最后，用于验证「每个视频各取最高码率」
+VARIANTS_B = [
+    {"bitrate": 832000, "content_type": "video/mp4", "url": "https://v/b480.mp4"},
+    {"content_type": "application/x-mpegURL", "url": "https://v/b_pl.m3u8"},
+    {"bitrate": 2560000, "content_type": "video/mp4", "url": "https://v/b720.mp4"},
+]
 
 
-def tweet_result(tweet_id, text, screen_name, variants=None):
+def video_media(variants):
+    """单个视频的媒体项；多视频推文传 media=[video_media(a), video_media(b)]"""
+    return {"type": "video", "video_info": {"variants": variants}}
+
+
+def tweet_result(tweet_id, text, screen_name, variants=None, media=None):
     legacy = {
         "id_str": tweet_id,
         "full_text": text,
         "created_at": "Wed Oct 10 20:19:24 +0000 2018",
     }
-    if variants is not None:
-        media = [{"type": "video", "video_info": {"variants": variants}}]
+    if media is None and variants is not None:
+        media = [video_media(variants)]
+    if media is not None:
         legacy["entities"] = {"media": media}
         legacy["extended_entities"] = {"media": media}
     user = {"legacy": {"screen_name": screen_name, "name": screen_name}}
@@ -124,12 +136,34 @@ def test_sort_mp4_urls_orders_by_bitrate_and_drops_m3u8():
     assert best_mp4_url(VARIANTS[3:]) is None
 
 
-def test_detail_video_url_ends_with_best_mp4():
+def test_detail_single_video_url_picks_best_mp4():
     data = detail([entry("1", tweet_result("1", "视频", "alice", VARIANTS))])
     urls = TweetDetailFilter(data, "1").tweet_video_url
-    # 下载器取列表最后一个，所以最后一个必须是最高码率
-    assert urls[-1] == "https://v/1080.mp4"
-    assert all(url.endswith(".mp4") for url in urls)
+    assert urls == ["https://v/1080.mp4"]
+
+
+def test_detail_multi_video_url_picks_best_mp4_per_media_in_order():
+    # 多视频推文：每个视频各取自己码率最高的 MP4，而不是跨视频混排
+    media = [video_media(VARIANTS), video_media(VARIANTS_B)]
+    data = detail([entry("2", tweet_result("2", "双视频", "alice", media=media))])
+    urls = TweetDetailFilter(data, "2").tweet_video_url
+    assert urls == ["https://v/1080.mp4", "https://v/b720.mp4"]
+
+
+def test_detail_media_without_mp4_is_skipped():
+    media = [
+        video_media(
+            [{"content_type": "application/x-mpegURL", "url": "https://v/pl.m3u8"}]
+        )
+    ]
+    data = detail([entry("3", tweet_result("3", "仅播放列表", "alice", media=media))])
+    assert TweetDetailFilter(data, "3").tweet_video_url == []
+
+
+def test_detail_photo_media_has_no_video_url():
+    media = [{"type": "photo", "media_url_https": "https://pbs.twimg.com/p.jpg"}]
+    data = detail([entry("4", tweet_result("4", "图片", "alice", media=media))])
+    assert TweetDetailFilter(data, "4").tweet_video_url == []
 
 
 def post_timeline(tweets):
@@ -153,6 +187,27 @@ def post_timeline(tweets):
 def test_post_video_url_picks_best_mp4_even_when_m3u8_is_last():
     videos = PostTweetFilter(post_timeline([("1", "alice", VARIANTS)])).tweet_video_url
     assert videos[0] == ["https://v/1080.mp4"]
+
+
+def test_post_multi_video_url_lists_best_per_media():
+    # 下载器按列表逐个下载，主页模式每个视频各取最高码率
+    media = [video_media(VARIANTS), video_media(VARIANTS_B)]
+    entries = [entry("9", tweet_result("9", "双视频", "alice", media=media))] + CURSORS
+    data = {
+        "data": {
+            "user": {
+                "result": {
+                    "timeline_v2": {
+                        "timeline": {"instructions": [{"entries": entries}]}
+                    }
+                }
+            }
+        }
+    }
+    assert PostTweetFilter(data).tweet_video_url[0] == [
+        "https://v/1080.mp4",
+        "https://v/b720.mp4",
+    ]
 
 
 # ---------------- ct0 自动作为 X-Csrf-Token（#426、#442） ----------------

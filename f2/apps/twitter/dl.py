@@ -134,10 +134,16 @@ class TwitterDownloader(BaseDownloader):
         # logger.info(tweet_data_dict)
         # logger.info("===================================")
 
-        # 动图属于视频类型
-        if self.tweet_media_type in ["video", "animated_gif"]:
+        # 动图属于视频类型；详情模式下媒体类型是列表（多视频/多图推文），统一按列表判断
+        media_types = (
+            [self.tweet_media_type]
+            if isinstance(self.tweet_media_type, str)
+            else self.tweet_media_type or []
+        )
+
+        if any(t in ("video", "animated_gif") for t in media_types):
             await self.download_video()
-        elif self.tweet_media_type and "photo" in self.tweet_media_type:
+        if any(isinstance(t, str) and "photo" in t for t in media_types):
             await self.download_images()
 
         await self.download_desc()
@@ -154,12 +160,23 @@ class TwitterDownloader(BaseDownloader):
             + "_video"
         )
 
-        if isinstance(self.tweet_video_url, list):
-            self.tweet_video_url = self.tweet_video_url[-1]  # 如果是列表，取第一个元素
-
-        await self.initiate_download(
-            _("视频"), self.tweet_video_url, self.base_path, video_name, ".mp4"
+        video_urls = (
+            [self.tweet_video_url]
+            if isinstance(self.tweet_video_url, str)
+            else self.tweet_video_url
         )
+        video_urls = [url for url in video_urls if url]
+
+        # 单视频沿用 _video 文件名（兼容已下载的文件），多视频加序号区分
+        multi_video = len(video_urls) > 1
+        for i, video_url in enumerate(video_urls):
+            await self.initiate_download(
+                _("视频"),
+                video_url,
+                self.base_path,
+                f"{video_name}_{i + 1}" if multi_video else video_name,
+                ".mp4",
+            )
 
     async def download_images(self):
         if not self.tweet_media_url:

@@ -6,6 +6,7 @@
 
 ## [Unreleased]
 
+- 修复 Twitter 多视频推文下载不完整的问题：详情模式的媒体类型是列表（多视频推文为 `["video","video"]`），此前与视频、图片两个下载分支都不匹配而被静默跳过；主页、喜欢、书签模式此前只下载最后一个视频；详情模式下同时包含图片与视频的推文只会下载图片。现在视频按媒体逐个下载，每个视频取各自码率最高的 MP4：单视频沿用 `_video` 文件名，多视频为 `_video_1`、`_video_2`（与图片的 `_image_{i+1}` 一致），此前已下载的 `_video.mp4` 不会被覆盖或删除；详情模式混合媒体推文的图片与视频都会下载。
 - 润色英文翻译：逐条审阅全部 935 条英文文案，改写其中 650 条。统一术语（作品 post、主页 profile、直播 livestream、直播间 live room、弹幕 danmaku、接口地址 API endpoint、配置文件 configuration file；抖音与 TikTok 按平台接口的命名，点赞（喜欢）为 favorites、收藏为 collection、收藏夹为 collection folder、合集为 mix，Twitter 仍用 likes 与 bookmarks），消息改为普通句式、不再逐词首字母大写，同一句中文只保留一种译法。修正误译：“配置文件的路径，最低优先”曾译为 highest priority，“配置文件路径无写权限”曾译为“配置文件不存在”，FAQ 提示的两句英文粘在一起，Bark 密钥长度把“位”（字符）译成了 bits；下载进度的状态与文件类型标签统一为 Done、Skipped、Video、Caption 等。收藏夹列表的提示不再用方括号，避免被 rich 当作样式标签。横幅的英文简介改为 “An asynchronous, multi-platform downloader”；英文文档中抖音、TikTok 的模式说明与 CLI 帮助统一叫法，TikTok 播放列表接口的 `secUid` 说明由“合集ID”更正为“用户ID”。
 - 补齐英文翻译：此前有 217 条文案在英文界面下仍显示中文，其中 102 条从未翻译，115 条因原文修改被标记为待确认（编译时会被跳过），涉及代理设置、下载进度、断点续传、m3u8 直播流、数据库与抖音弹幕、评论等提示；现在全部有英文译文，原有 718 条译文不变。
 - TikTok 的 `https://www.tiktok.com/user/<sec_uid>` 链接直接从地址中取出 `sec_uid`，不再发请求（#366）：这类页面里没有用户数据，此前会报“未在响应中找到 __UNIVERSAL_DATA_FOR_REHYDRATION__”或“接口状态码异常”。直播模式需要用户名，请使用 `@用户名` 形式的主页链接。
