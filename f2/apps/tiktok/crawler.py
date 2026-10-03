@@ -8,6 +8,7 @@ from typing import Any, Optional, Union
 
 from google.protobuf import json_format
 from google.protobuf.message import DecodeError as ProtoDecodeError
+from pydantic import BaseModel
 from websockets import (
     ConnectionClosedOK,
     WebSocketServer,
@@ -49,12 +50,13 @@ from f2.apps.tiktok.proto.tiktok_webcast_pb2 import (
     SocialMessage,
     UserFanTicket,
 )
-from f2.apps.tiktok.utils import ClientConfManager, XBogusManager
+from f2.apps.tiktok.utils import ClientConfManager, XGnarlyManager
 from f2.crawlers.base_crawler import BaseCrawler
 from f2.crawlers.websocket_crawler import WebSocketCrawler
 from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
 from f2.utils.http.endpoint import BaseEndpointManager
+from f2.utils.http.impersonate import create_impersonate_transport
 
 
 class TiktokCrawler(BaseCrawler):
@@ -68,120 +70,104 @@ class TiktokCrawler(BaseCrawler):
         self.headers = kwargs.get("headers", {}) | {"Cookie": kwargs["cookie"]}
         super().__init__(kwargs=kwargs, proxies=proxies, crawler_headers=self.headers)
 
-    async def fetch_user_profile(self, params: UserProfile):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.USER_DETAIL,
+    def _create_mount(self, async_mode=False) -> dict:
+        """
+        www.tiktok.com 与 webcast.tiktok.com 的接口会校验 TLS 与 HTTP/2 指纹，改由模拟 Chrome 的传输层发送
+        (Send TikTok API requests through a transport that impersonates Chrome)
+
+        httpx 发出的请求即使签名正确也只会得到 200 空内容；视频 CDN 等其他域名仍使用 httpx，
+        未安装 curl_cffi 时全部使用 httpx。
+        """
+        mounts = super()._create_mount(async_mode)
+        if async_mode:
+            transport = create_impersonate_transport(
+                proxy=self._get_proxy_config(),
+                verify=self._verify,
+                max_clients=self._max_connections,
+            )
+            if transport is not None:
+                # 两个域名共用同一个 curl_cffi 会话
+                for origin in ("https://www.tiktok.com", "https://webcast.tiktok.com"):
+                    mounts[origin] = transport
+        return mounts
+
+    def _web_endpoint(self, base_endpoint: str, params: BaseModel) -> str:
+        """
+        TikTok 网页接口的请求地址：按网页 SDK 追加 X-Dynosaur、msToken、X-Bogus 与 X-Gnarly
+        (Build the signed URL of a TikTok web API)
+
+        webcast.tiktok.com 的直播接口同样使用新版签名：2026-09-26 实测 im/fetch 只用 X-Bogus
+        签名时返回空内容。
+        """
+        return XGnarlyManager.model_2_endpoint(
+            self.headers.get("User-Agent", ""),
+            base_endpoint,
             params.model_dump(),
+            self.headers.get("Cookie") or "",
         )
+
+    async def fetch_user_profile(self, params: UserProfile):
+        endpoint = self._web_endpoint(tkendpoint.USER_DETAIL, params)
         logger.debug(_("用户信息接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_user_post(self, params: UserPost):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.USER_POST,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.USER_POST, params)
         logger.debug(_("主页作品接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_user_like(self, params: UserLike):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.USER_LIKE,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.USER_LIKE, params)
         logger.debug(_("喜欢作品接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_user_collect(self, params: UserCollect):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.USER_COLLECT,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.USER_COLLECT, params)
         logger.debug(_("收藏作品接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_user_play_list(self, params: UserPlayList):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.USER_PLAY_LIST,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.USER_PLAY_LIST, params)
         logger.debug(_("合集列表接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_user_mix(self, params: UserMix):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.USER_MIX,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.USER_MIX, params)
         logger.debug(_("合集作品接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_post_detail(self, params: PostDetail):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.AWEME_DETAIL,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.AWEME_DETAIL, params)
         logger.debug(_("作品详情接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_post_comment(self, params: PostComment):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.POST_COMMENT,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.POST_COMMENT, params)
         logger.debug(_("作品评论接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_post_recommend(self, params: PostDetail):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.HOME_RECOMMEND,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.HOME_RECOMMEND, params)
         logger.debug(_("首页推荐接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_post_search(self, params: PostSearch):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.POST_SEARCH,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.POST_SEARCH, params)
         logger.debug(_("搜索作品接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_user_live(self, params: UserLive):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.USER_LIVE,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.USER_LIVE, params)
         logger.debug(_("用户直播接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_check_live_alive(self, params: CheckLiveAlive):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.CHECK_LIVE_ALIVE,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.CHECK_LIVE_ALIVE, params)
         logger.debug(_("检查开播状态接口地址：{0}").format(endpoint))
         return await self._fetch_get_json(endpoint)
 
     async def fetch_live_im_fetch(self, params: LiveImFetch):
-        endpoint = XBogusManager.model_2_endpoint(
-            self.headers.get("User-Agent"),
-            tkendpoint.LIVE_IM_FETCH,
-            params.model_dump(),
-        )
+        endpoint = self._web_endpoint(tkendpoint.LIVE_IM_FETCH, params)
         logger.debug(_("直播弹幕初始化接口地址：{0}").format(endpoint))
         response = await self._fetch_response(endpoint)
         payload_package = Response()
@@ -381,6 +367,7 @@ class TiktokWebSocketCrawler(WebSocketCrawler):
         # wss_verify = wss_conf.get("verify")
         # 暂不支持wss本地证书验证
 
+        server: Optional[WebSocketServer] = None
         try:
             server = await serve(self.register_client, wss_domain, wss_port)
             logger.info(
@@ -398,9 +385,11 @@ class TiktokWebSocketCrawler(WebSocketCrawler):
                 _("[StartServer] [❌ 服务器启动失败] | [错误：{0}]").format(exc)
             )
         finally:
-            server.close()
-            await server.wait_closed()
-            logger.info(_("[StartServer] [🔒 本地 WebSocket 服务器已关闭]"))
+            # 端口被占用等原因启动失败时 server 仍为 None，此前会在这里抛出 UnboundLocalError
+            if server is not None:
+                server.close()
+                await server.wait_closed()
+                logger.info(_("[StartServer] [🔒 本地 WebSocket 服务器已关闭]"))
 
     async def _timeout_check(self, server: WebSocketServer) -> None:
         """
@@ -421,7 +410,7 @@ class TiktokWebSocketCrawler(WebSocketCrawler):
                 break
         server.close()
         # await server.wait_closed()
-        await self.close_websocket()
+        await self.close_websocket(reason="no_client")
 
     async def register_client(self, websocket: WebSocketServerProtocol) -> None:
         """
@@ -863,7 +852,9 @@ class TiktokWebSocketCrawler(WebSocketCrawler):
         )
 
         cls._log(
-            _("[WebcastOecLiveShoppingMessage] [🛍️直播间购物消息] {0}").format(data_json)
+            _("[WebcastOecLiveShoppingMessage] [🛍️直播间购物消息] {0}").format(
+                data_json
+            )
         )
         return data_json
 

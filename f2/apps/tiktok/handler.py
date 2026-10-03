@@ -40,13 +40,16 @@ from f2.apps.tiktok.utils import (
     AwemeIdFetcher,
     SecUserIdFetcher,
     create_or_rename_user_folder,
+    normalize_cursor,
 )
 from f2.cli.cli_console import RichConsoleManager
 from f2.exceptions.api_exceptions import APIResponseError
+from f2.exceptions.base import F2Error
 from f2.i18n.translator import _
 from f2.log.logger import logger
-from f2.utils.core.decorators import mode_function_map, mode_handler
-from f2.utils.time.timestamp import get_timestamp, interval_2_timestamp, timestamp_2_str
+from f2.utils.core.decorators import get_mode_handlers, mode_handler
+from f2.utils.file.path import is_user_folder_migrated
+from f2.utils.time.timestamp import get_timestamp, parse_interval, timestamp_2_str
 
 rich_console = RichConsoleManager().rich_console
 rich_prompt = RichConsoleManager().rich_prompt
@@ -58,6 +61,22 @@ TK_LIVE_STATUS_MAPPING = {
     # 3: _("直播中"),
     4: _("已关播"),
 }
+
+
+def _next_cursor(page: Any, current: Any) -> Optional[int]:
+    """
+    计算下一页的游标，没有下一页时返回 None（#270）
+
+    TikTok 返回的 cursor 有时是字符串；最后一页之后的 cursor 可能是 0 或 -1，
+    继续请求会从头重新抓取。因此 hasMore 为假、游标无效或没有前进时都视为结束。
+    """
+
+    if not page.hasMore:
+        return None
+    next_cursor = normalize_cursor(page.cursor)
+    if next_cursor is None or next_cursor <= 0 or next_cursor == current:
+        return None
+    return next_cursor
 
 
 class TiktokHandler:
@@ -164,6 +183,10 @@ class TiktokHandler:
             secUid=secUid, uniqueId=uniqueId
         )
 
+        # 只按 uniqueId 查询时，用户改过 uniqueId 就查不到旧记录，再按 secUid 查一次
+        if not local_user_data and not secUid and current_user_data.secUid:
+            local_user_data = await db.get_user_info(secUid=current_user_data.secUid)
+
         # 获取当前用户最新昵称
         current_uniqueId = current_user_data.uniqueId
 
@@ -176,6 +199,15 @@ class TiktokHandler:
         if not local_user_data:
             await db.add_user_info(**current_user_data._to_dict())
             logger.debug(_("用户：{0} 已添加到数据库").format(current_uniqueId))
+        # uniqueId 变化且各下载模式的旧目录都已改名时，把数据库中的 uniqueId 改为新值，
+        # 以后再改名时从新 uniqueId 开始处理；还有旧目录时保留旧值，下次运行继续处理
+        elif is_user_folder_migrated(
+            self.kwargs, "tiktok", local_user_data.get("uniqueId"), current_uniqueId
+        ):
+            await db.update_user_info(
+                secUid=current_user_data.secUid, uniqueId=current_uniqueId
+            )
+            logger.debug(_("用户：{0} 的新名称已更新到数据库").format(current_uniqueId))
 
         return user_path
 
@@ -300,15 +332,13 @@ class TiktokHandler:
         min_cursor = 0
         page_counts = self.kwargs.get("page_counts", 35)
         max_counts = self.kwargs.get("max_counts")
-        interval = self.kwargs.get("interval")
+
+        # 提供了日期区间时，从区间结束时间开始倒序翻页，翻过开始时间后停止
+        time_range = parse_interval(self.kwargs.get("interval"), unit="milli")
+        if time_range:
+            min_cursor, cursor = time_range
 
         secUid = await SecUserIdFetcher.get_secuid(str(self.kwargs.get("url")))
-
-        # 判断是否提供了interval参数，如果有则获取start_date转时间戳提供给max_cursor
-        if interval is not None and interval != "all":
-            # 倒序查找
-            min_cursor = interval_2_timestamp(interval, date_type="start")
-            cursor = interval_2_timestamp(interval, date_type="end")
 
         async with AsyncUserDB("tiktok_users.db") as udb:
             user_path = await self.get_or_add_user_data(
@@ -348,6 +378,10 @@ class TiktokHandler:
 
         max_counts = max_counts or float("inf")
         videos_collected = 0
+        # 默认使用 secUid：没有作品时，nickname_raw 也有值（#401）
+        nickname_raw = secUid
+        cursor = normalize_cursor(cursor, 0) or 0
+        min_cursor = normalize_cursor(min_cursor, 0) or 0
 
         logger.info(_("处理用户：{0} 发布的作品").format(secUid))
 
@@ -374,15 +408,16 @@ class TiktokHandler:
 
             if not video.has_aweme:
                 logger.info(_("第 {0} 页没有找到作品").format(cursor))
-                if not video.hasMore and str(video.api_status_code) == "0":
+                next_cursor = _next_cursor(video, cursor)
+                if next_cursor is None:
                     logger.info(_("用户：{0} 所有作品采集完毕").format(secUid))
                     break
-                else:
-                    cursor = video.cursor
-                    continue
+                cursor = next_cursor
+                continue
 
-            # 防止最后一页不包含任何作品导致无法获取nickname_raw
-            nickname_raw = video.nickname_raw[0]
+            # 只在本页有作品时更新昵称
+            if video.nickname_raw:
+                nickname_raw = video.nickname_raw[0]
 
             logger.debug(_("当前请求的cursor：{0}").format(cursor))
             logger.debug(
@@ -399,7 +434,13 @@ class TiktokHandler:
 
             # 更新已经处理的作品数量 (Update the number of videos processed)
             videos_collected += len(video.aweme_id)
-            cursor = video.cursor
+
+            # 最后一页之后不再请求，否则会拿着 0 或 -1 的游标从头重新抓取（#270）
+            next_cursor = _next_cursor(video, cursor)
+            if next_cursor is None:
+                logger.info(_("用户：{0} 所有作品采集完毕").format(secUid))
+                break
+            cursor = next_cursor
 
             # 避免请求过于频繁
             logger.info(_("等待 {0} 秒后继续").format(self.kwargs.get("timeout", 5)))
@@ -515,9 +556,11 @@ class TiktokHandler:
                     logger.debug(_("用户：{0} 所有作品采集完毕").format(secUid))
                     break
 
-            # 更新已经处理的作品数量 (Update the number of videos processed)
-            videos_collected += len(like.aweme_id)
-            cursor = like.cursor
+            next_cursor = _next_cursor(like, cursor)
+            if next_cursor is None:
+                logger.debug(_("用户：{0} 所有作品采集完毕").format(secUid))
+                break
+            cursor = next_cursor
 
             # 避免请求过于频繁
             logger.info(_("等待 {0} 秒后继续").format(self.kwargs.get("timeout", 5)))
@@ -636,9 +679,11 @@ class TiktokHandler:
                     logger.debug(_("用户：{0} 所有作品采集完毕").format(secUid))
                     break
 
-            # 更新已经处理的作品数量 (Update the number of videos processed)
-            videos_collected += len(collect.aweme_id)
-            cursor = collect.cursor
+            next_cursor = _next_cursor(collect, cursor)
+            if next_cursor is None:
+                logger.debug(_("用户：{0} 所有作品采集完毕").format(secUid))
+                break
+            cursor = next_cursor
 
             # 避免请求过于频繁
             logger.info(_("等待 {0} 秒后继续").format(self.kwargs.get("timeout", 5)))
@@ -849,9 +894,11 @@ class TiktokHandler:
                     logger.debug(_("合集: {0} 所有作品采集完毕").format(mixId))
                     break
 
-            # 更新已经处理的作品数量 (Update the number of videos processed)
-            videos_collected += len(mix.aweme_id)
-            cursor = mix.cursor
+            next_cursor = _next_cursor(mix, cursor)
+            if next_cursor is None:
+                logger.debug(_("合集: {0} 所有作品采集完毕").format(mixId))
+                break
+            cursor = next_cursor
 
             # 避免请求过于频繁
             logger.info(_("等待 {0} 秒后继续").format(self.kwargs.get("timeout", 5)))
@@ -1132,7 +1179,7 @@ class TiktokHandler:
             live_im = await crawler.fetch_live_im_fetch(params)
 
         if live_im:
-            logger.debug(
+            logger.info(
                 _("直播间room_id：{0} 弹幕cursor：{1}").format(room_id, live_im)
             )
             logger.info(_("结束直播间信息查询"))
@@ -1196,8 +1243,16 @@ class TiktokHandler:
 
             result = await wss.fetch_live_danmaku(params)
 
-            if result == "closed":
-                logger.info(_("直播间：{0} 已结束直播").format(room_id))
+            if result == "no_client":
+                logger.info(
+                    _(
+                        "本地 WebSocket 服务器没有客户端连接，已停止接收直播间：{0} 的弹幕，直播可能仍在进行"
+                    ).format(room_id)
+                )
+            elif result == "closed":
+                logger.info(
+                    _("直播间：{0} 的弹幕连接已关闭，可能已结束直播").format(room_id)
+                )
             elif result == "error":
                 logger.error(_("直播间：{0} 弹幕连接异常").format(room_id))
 
@@ -1206,7 +1261,8 @@ class TiktokHandler:
 
 async def main(kwargs):
     mode = kwargs.get("mode")
-    if mode in mode_function_map:
-        await mode_function_map[mode](TiktokHandler(kwargs))
+    handlers = get_mode_handlers(__name__)
+    if mode in handlers:
+        await handlers[mode](TiktokHandler(kwargs))
     else:
-        logger.error(_("不存在该模式: {0}").format(mode))
+        raise F2Error(_("不存在该模式: {0}").format(mode))

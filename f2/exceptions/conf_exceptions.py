@@ -1,40 +1,39 @@
 # path: f2/exceptions/conf_exceptions.py
 
+from f2.exceptions.base import F2Error
 from f2.i18n.translator import _
-from f2.log.logger import logger
+from f2.log.redact import is_sensitive_key, mask_secret
 
 
-class ConfError(Exception):
-    """基本配置异常类，其他配置异常都会继承这个类"""
+class ConfError(F2Error):
+    """
+    基本配置异常类，其他配置异常都会继承这个类
+
+    文件路径、配置项与值会拼接在 `str()` 结果中，cookie、key、token 等敏感配置项的值会打码；
+    异常在构造时不记录日志。
+    """
 
     def __init__(self, message=None, filepath=None, key=None, value=None):
         self.filepath = filepath
         self.key = key
         self.value = value
-
-        # 记录日志，包含更多详细信息
-        log_message = _("配置错误: {message}").format(message=message or _("未知错误"))
-        if filepath:
-            log_message += f" | Filepath: {filepath}"
-        if key:
-            log_message += f" | Key: {key}"
-        if value:
-            log_message += f" | Value: {value}"
-
-        logger.error(log_message)
-        logger.error(_("请前往 QA 文档 https://f2.wiki/faq 查看相关帮助"))
-
         super().__init__(message)
 
     def __str__(self):
-        """返回详细的错误信息"""
-        parts = [super().__str__()]
-        if self.filepath:
-            parts.append(f"Filepath: {self.filepath}")
-        if self.key:
-            parts.append(f"Key: {self.key}")
-        if self.value:
-            parts.append(f"Value: {self.value}")
+        """返回详细的错误信息，子类已写进消息的字段不再重复追加"""
+        message = super().__str__()
+        value = self.value
+        if value and is_sensitive_key(self.key):
+            value = mask_secret(value)
+        parts = [message]
+        # 配置项的标签不用 Key：日志脱敏会把 "Key: 名称" 当成密钥，把配置项名称打码
+        for label, detail in (
+            ("Filepath", self.filepath),
+            ("Setting", self.key),
+            ("Value", value),
+        ):
+            if detail and str(detail) not in message:
+                parts.append(f"{label}: {detail}")
         return " | ".join(parts)
 
 
@@ -42,9 +41,8 @@ class InvalidEncodingError(ConfError):
     """提示用户配置包含非ASCII字符"""
 
     def __init__(self, key=None, value=None):
+        # 配置项与值由 ConfError 追加，敏感配置项的值会打码
         message = _("请确保所有配置项和值均为 ASCII 或 UTF-8 编码的字符串")
-        if key and value:
-            message += f" | Key: {key}, Value: {value}"
         super().__init__(message=message, key=key, value=value)
 
 
@@ -57,9 +55,8 @@ class InvalidConfError(ConfError):
                 "请检查配置文件格式是否正确: {key} 不能为空，使用默认配置"
             ).format(key=key)
         else:
-            message = _(
-                "请检查配置文件格式是否正确 | Key: {key}, Value: {value}，使用默认配置"
-            ).format(key=key, value=value)
+            # 配置项与值由 ConfError 追加，敏感配置项的值会打码
+            message = _("请检查配置文件格式是否正确，使用默认配置")
         super().__init__(message=message, key=key, value=value)
 
 

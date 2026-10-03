@@ -46,9 +46,9 @@
 
 ::: details :link: 解决办法
 1. 检查你的配置文件中是否有 `interval` 参数。如果没有，请添加为 `interval: all`。
-2. 如果你的配置文件中有 `interval` 参数，请检查你的 `interval` 参数是否设置正确。
+2. 如果你的配置文件中有 `interval` 参数，请确认区间覆盖了要下载的作品的发布时间（包含首尾两天，按北京时间计算）。格式写错时 `F2` 会在请求前直接报错退出，不会出现这条警告。
 3. `cli` 命令中的 `-i` 参数也是用来设置作品发布时间的筛选条件 你可以设置为 `-i all`。
-4. 如果你使用了 `-i` 参数，请检查你的 `-i` 参数是否设置正确。
+4. 如果你使用了 `-i` 参数，同样请确认区间覆盖了要下载的作品。
 :::
 **参考链接：**
 - https://github.com/Johnserf-Seed/f2/issues/42
@@ -83,6 +83,41 @@
 4. 调整超时设置。
 :::
 
+## CERTIFICATE_VERIFY_FAILED 证书校验失败
+
+出现 `certificate verify failed` 或 `CERTIFICATE_VERIFY_FAILED` 说明 `F2` 无法验证服务器证书。`F2` 默认校验所有 `HTTPS` 请求的证书。
+
+::: details :link: 解决办法
+1. 先确认系统时间正确、根证书没有过期（`pip install -U certifi` 可更新证书库）。
+2. 如果你在使用抓包工具或公司代理（自签名证书），可以把它的 `CA` 证书路径填到 `conf.yaml` 的 `verify` 中。
+3. 仅在受信任的调试环境下，才用 `--insecure` 临时关闭校验，或在 `conf.yaml` 中设置 `verify: false`。详见 [证书校验](/site-config#证书校验)。
+:::
+
+## douyin 403 Forbidden：Blocked by ArgusSecurityPlugin
+
+下载 `douyin` 的主页作品、单个作品、点赞或收藏时出现 `403 Forbidden`，直接访问接口地址看到 `Blocked by ArgusSecurityPlugin Uifid Not Found`，是因为抖音在 2026 年 8 月给接口网关加了 ArgusSecurityPlugin 校验，请求缺少 `x-tt-argus` 请求头就会被拦截。
+
+新版 `F2` 会自动附加 `x-tt-argus`，并从 `cookie` 中读取 `UIFID`（未登录时为 `UIFID_TEMP`）作为 `uifid` 请求头，不需要手动配置。
+
+::: details :link: 解决办法
+1. 升级到最新版本的 `F2`。
+2. 如果仍然出现 403，从浏览器重新复制完整的 `cookie`，不要只复制其中几个字段。
+3. 网关目前只校验 `x-tt-argus` 是否存在。如果将来开始校验取值，可以在 `conf.yaml` 的 `douyin.headers` 中填写浏览器请求里的值来覆盖默认值：
+
+```yaml
+f2:
+  douyin:
+    headers:
+      User-Agent: ...
+      Referer: https://www.douyin.com/
+      x-tt-argus: 从浏览器开发者工具的请求头中复制
+      uifid: 从浏览器开发者工具的请求头中复制
+```
+:::
+**参考链接：**
+- https://github.com/Johnserf-Seed/f2/issues/443
+- https://github.com/Johnserf-Seed/f2/pull/446
+
 ## tiktok 403 Forbidden
 
 当下载 `tiktok` 视频时出现 `403 Forbidden` 错误时，是由于 `设备id` 被封禁导致的。
@@ -99,6 +134,22 @@
 - https://f2.wiki/guide/apps/tiktok/overview#%E7%94%9F%E6%88%90deviceid-%F0%9F%9F%A2
 - https://github.com/Johnserf-Seed/f2/issues/79
 - https://github.com/Johnserf-Seed/f2/issues/154
+
+## tiktok 响应内容为空，状态码 200
+
+`TikTok` 网页接口（`www.tiktok.com/api/...` 与直播的 `webcast.tiktok.com/webcast/...`）返回 `200` 但内容为空、日志提示重试次数达到上限时，说明请求被风控拦截了，响应头中会带有 `tt_orcas_res: 1`。常见原因有两个：
+
+1. 客户端指纹：这些接口会校验 TLS 与 HTTP/2 指纹，`httpx` 发出的请求即使签名正确也会被拦截。`F2` 会通过 `curl_cffi` 自动模拟 Chrome 发送这些请求，缺少 `curl_cffi` 时日志中会有提示。
+2. 游客 cookie：用户信息等接口只接受登录后的 `cookie`；用户发布作品用游客 `cookie` 也能获取。
+
+::: details :link: 解决办法
+1. 更新到开发分支 `v0.0.1.8-pw3` 或之后发布的版本，`curl_cffi` 会作为依赖一起安装；如果日志提示未安装 `curl_cffi`（例如使用了 `--no-deps` 安装），执行 `pip install curl_cffi` 后重新运行。
+2. 在配置文件中使用登录后的 `cookie`，获取方法见本页“第 n 次请求响应内容为空”。
+3. `msToken` 会从 `cookie` 中读取，不需要单独配置，也不要手动伪造，伪造的值同样会得到空内容。
+:::
+**参考链接：**
+- https://f2.wiki/guide/apps/tiktok/overview#%E4%BD%BF%E7%94%A8%E6%8E%A5%E5%8F%A3%E6%A8%A1%E5%9E%8B%E7%94%9F%E6%88%90%E6%96%B0%E7%89%88%E7%AD%BE%E5%90%8D%E5%8F%82%E6%95%B0-%F0%9F%9F%A2
+- https://github.com/Johnserf-Seed/f2/issues/384
 
 ## TypeError: object of type 'NoneType' has no len()
 
@@ -125,14 +176,14 @@
 
 ## twitter 403 forbidden
 
-当下载 `twitter` 推文时出现 `403 Forbidden` 错误时，是由于 `cookie` 或 `X-Csrf-Token` 失效导致的。
+当下载 `twitter` 推文时出现 `403 Forbidden` 错误时，通常是由于 `cookie` 失效，或者 `X-Csrf-Token` 与 `cookie` 不匹配导致的。
 
 ::: details :link: 解决办法
-1. 重新获取 `cookie` 和 `X-Csrf-Token`。
-2. 将新的 `cookie` 和 `X-Csrf-Token` 替换到配置文件中。
+1. 登录后从浏览器重新复制完整的 `cookie`，其中应包含 `auth_token` 与 `ct0`。
+2. 将新的 `cookie` 替换到配置文件中。
 3. 重新运行下载命令。
 
-需要注意的是，`X-Csrf-Token` 配置在 `F2配置文件(conf.yaml)` 中，`cookie` 配置在 `应用低频/主配置文件(app.yaml)` 或 `应用高频/自定义配置文件` 中。
+`F2` 会自动把 `cookie` 中的 `ct0` 作为 `X-Csrf-Token` 使用，所以一般不需要单独配置。只有 `cookie` 里没有 `ct0` 时，才会使用 `F2配置文件(conf.yaml)` 中的 `X-Csrf-Token`。`cookie` 配置在 `应用低频/主配置文件(app.yaml)` 或 `应用高频/自定义配置文件` 中。
 :::
 
 ## Installing build dependencies error
@@ -197,3 +248,33 @@ curl --proxy http://127.0.0.1:8080 https://httpbin.org/ip
 5. 尝试不同的代理服务器或类型
 6. 检查代理日志中的错误消息
 :::
+
+## 自动获取 Cookie 失败：Unable to get key for cookie decryption
+
+使用 `--auto-cookie chrome` 或 `--auto-cookie edge` 时出现这个错误，多半是因为 Windows 上的新版 Chrome、Edge（2024 年 8 月以后的版本）改用了与应用绑定的加密方式（App-Bound Encryption）保存 cookie，`F2` 依赖的 `browser_cookie3`（目前为 0.20.1）还不能解密。macOS 上出现这个错误，通常是没有在钥匙串弹窗中允许访问。
+
+::: details :link: 解决办法
+1. 在 Firefox 中登录后使用 `--auto-cookie firefox`，Firefox 不受影响。
+2. 在浏览器中登录后手动复制 cookie，写入配置文件的 `cookie`，或用 `-k` 传入，获取方法见各应用的 `--cookie` 说明。
+3. macOS 上重新执行命令，并在钥匙串弹窗中选择“允许”。
+4. 提示 `Unable to read database file` 或“请结束所有浏览器相关的进程”时，是浏览器仍在运行、cookie 数据库被占用，完全关闭浏览器后重试。
+:::
+
+::: tip :bulb: 提示
+获取失败时 `F2` 不会修改配置文件，并以退出码 `1` 结束。
+:::
+
+**参考链接：**
+- https://github.com/Johnserf-Seed/f2/issues/193
+- https://github.com/borisbabic/browser_cookie3/issues/210
+
+## 抖音下载的视频不是最高清晰度
+
+`F2` 会在接口返回的所有清晰度中选择分辨率最高的一项，分辨率相同时选择码率更高的一项。有些作品在 App 中可以选择 2K、4K，但网页接口只返回到 1080p，这时只能下载到 1080p。
+
+::: tip :bulb: 提示
+最高清晰度有时只有 H.265（HEVC）编码的版本，较旧的播放器可能无法播放。可以使用 VLC、PotPlayer 等支持 H.265 的播放器，Windows 自带的播放器需要安装 HEVC 视频扩展。
+:::
+
+**参考链接：**
+- https://github.com/Johnserf-Seed/f2/issues/214

@@ -5,7 +5,7 @@ import base64
 import re
 import traceback
 from pathlib import Path
-from typing import Union
+from typing import Any, List, Optional, Union
 from urllib.parse import urlparse
 
 import httpx
@@ -21,9 +21,10 @@ from f2.exceptions.api_exceptions import (
 )
 from f2.exceptions.conf_exceptions import InvalidConfError
 from f2.i18n.translator import _
-from f2.log.logger import logger, trace_logger
+from f2.log.logger import trace_logger
 from f2.utils.config.conf_manager import ConfigManager
 from f2.utils.file.name import split_filename
+from f2.utils.file.path import get_user_folder_path, migrate_user_folders
 from f2.utils.string.formatter import extract_valid_urls
 from f2.utils.time.timestamp import str_2_timestamp
 
@@ -101,6 +102,11 @@ class UniqueIdFetcher(BaseCrawler):
     _UNIQUE_ID_PATTERN = re.compile(
         r"(?:https?://)?(?:www\.)?(twitter\.com|x\.com)/(?:@)?([a-zA-Z0-9_]+)"
     )
+
+    proxies = ClientConfManager.proxies()
+
+    def __init__(self):
+        super().__init__(proxies=self.proxies)
 
     @classmethod
     async def get_unique_id(cls, url: str) -> str:
@@ -239,6 +245,11 @@ class TweetIdFetcher(BaseCrawler):
     _TWEET_URL_PATTERN = re.compile(
         r"(?:https?://)?(?:www\.)?(?:twitter|x)\.com/.*/status/(\d+)(?:/|\?|#.*$|$)"
     )
+
+    proxies = ClientConfManager.proxies()
+
+    def __init__(self):
+        super().__init__(proxies=self.proxies)
 
     @classmethod
     async def get_tweet_id(cls, url: str) -> str:
@@ -404,17 +415,26 @@ def create_or_rename_user_folder(
 
     Returns:
         user_path (Path): 用户目录路径 (User directory path)
-    """
-    user_path = create_user_folder(kwargs, current_nickname)
 
-    if not local_user_data:
+    Note:
+        昵称变化时，把各下载模式下旧昵称的目录都重命名为新昵称，已下载的文件随目录保留；
+        某个模式下新昵称的目录已存在时，该模式的两个目录都保持不变。
+        (When the nickname changes, the folders of the old nickname are renamed to the
+        new nickname in every download mode, keeping the downloaded files; in a mode
+        where a folder of the new nickname already exists, both folders are left as
+        they are.)
+    """
+    local_nickname = local_user_data.get("nickname") if local_user_data else None
+
+    if local_nickname and current_nickname and local_nickname != current_nickname:
+        # 昵称不一致，把各下载模式下旧昵称的目录重命名为新昵称
+        user_path = migrate_user_folders(
+            kwargs, "twitter", local_nickname, current_nickname
+        )
+        user_path.mkdir(parents=True, exist_ok=True)
         return user_path
 
-    if local_user_data.get("nickname") != current_nickname:
-        # 昵称不一致，触发目录更新操作
-        user_path = rename_user_folder(user_path, current_nickname)
-
-    return user_path
+    return create_user_folder(kwargs, current_nickname)
 
 
 def create_user_folder(kwargs: dict, nickname: Union[str, int]) -> Path:
@@ -437,25 +457,13 @@ def create_user_folder(kwargs: dict, nickname: Union[str, int]) -> Path:
         (If kwargs is not in dict format, TypeError will be raised.)
     """
 
-    # 确定函数参数是否正确
-    if not isinstance(kwargs, dict):
-        raise TypeError("kwargs 参数必须是字典")
-
-    # 创建基础路径
-    base_path = Path(kwargs.get("path", "Download"))
-
-    # 添加下载模式和用户名
-    user_path = (
-        base_path / "twitter" / kwargs.get("mode", "PLEASE_SETUP_MODE") / str(nickname)
-    )
-
-    # 获取绝对路径并确保它存在
-    resolve_user_path = user_path.resolve()
+    # 获取绝对路径，与重命名用户目录时的路径计算一致
+    user_path = get_user_folder_path(kwargs, "twitter", nickname)
 
     # 创建目录
-    resolve_user_path.mkdir(parents=True, exist_ok=True)
+    user_path.mkdir(parents=True, exist_ok=True)
 
-    return resolve_user_path
+    return user_path
 
 
 def rename_user_folder(old_path: Path, new_nickname: str) -> Path:
@@ -478,8 +486,36 @@ def rename_user_folder(old_path: Path, new_nickname: str) -> Path:
     return new_path
 
 
-import base64
-import re
+def sort_mp4_urls(variants: Any) -> List[str]:
+    """
+    从视频变体中取出 MP4 链接，按码率从低到高排列，最后一个清晰度最高。
+
+    变体里还有 application/x-mpegURL 的 m3u8 播放列表，它不是视频文件，
+    直接保存会得到只有几 KB 的文本（#436）；接口返回的顺序也不保证按码率排列。
+
+    Args:
+        variants (Any): 单个变体字典，或变体字典的列表
+
+    Returns:
+        List[str]: MP4 链接列表
+    """
+    if isinstance(variants, dict):
+        variants = [variants]
+    mp4_variants = [
+        variant
+        for variant in variants or []
+        if isinstance(variant, dict)
+        and variant.get("content_type") == "video/mp4"
+        and variant.get("url")
+    ]
+    mp4_variants.sort(key=lambda variant: variant.get("bitrate") or 0)
+    return [variant["url"] for variant in mp4_variants]
+
+
+def best_mp4_url(variants: Any) -> Optional[str]:
+    """返回码率最高的 MP4 链接，没有 MP4 时返回 None"""
+    urls = sort_mp4_urls(variants)
+    return urls[-1] if urls else None
 
 
 def extract_desc(text):
@@ -493,7 +529,8 @@ def extract_desc(text):
         str: 提取后的标题
     """
 
-    if not text:  # 兼容 API 未返回推文内容的情况
+    # 部分推文的 full_text 为 null（#436、#404）
+    if not text:
         return ""
 
     text = text.strip()  # 去掉两端空格

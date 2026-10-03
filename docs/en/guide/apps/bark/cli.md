@@ -24,6 +24,7 @@ outline: [2,3]
 | `-a`   | `--isArchive` | `BOOLEAN` | Whether to save the push, saved by default |
 | `-u`   | `--url` | `TEXT` | Clicking on the push notification jumps to the URL |
 | `-P`   | `--proxies` | `TEXT...` | Proxy server |
+|        | `--insecure` | `FLAG` | Disable TLS certificate verification |
 |        | `--update-config` | `FLAG` | Update configuration file |
 |        | `--init-config` | `TEXT` | Initialize configuration file |
 | `-h`   |               | `FLAG` | Display rich text help |
@@ -35,6 +36,8 @@ outline: [2,3]
 ### `--config`
 
 Specify the path to the configuration file, with the lowest priority. The default path for the **main configuration file** is `f2/conf/app.yaml`, which supports **absolute paths** and **relative paths**.
+
+If the file cannot be parsed, `F2` reports the line and column of the error; it also stops with an error if the top level is not a key-value mapping or the file has no settings for this app, exiting with code `1`. When the app's settings are missing, use `--init-config` to add the default settings to the file.
 
 ### `--key`
 
@@ -109,8 +112,9 @@ f2 bark -t "Test Title" -b "Test Body" -M cipher
 > [!IMPORTANT] IMPORTANT ❗❗❗
 > - After enabling push encryption, the default `get` request mode will no longer be applicable and needs to be switched to `cipher` mode.
 > - In the `Push Encryption` settings on the `Bark` homepage, a custom key must be configured as required. The length of the key is determined by the selected encryption algorithm.
-> - To enhance safety and reduce collision probability, `F2` automatically uses random `iv`. In `Bark`, `iv` can be filled in arbitrarily.
+> - To enhance safety and reduce collision probability, `F2` generates a random alphanumeric `iv` for every push (16 characters for `CBC`, 12 for `GCM`) and sends it with the request. In `Bark`, `iv` can be filled in arbitrarily.
 > - Although the push encryption feature is still in the experimental stage, it is recommended to use the `AES-256-CBC` encryption mode first. Because the `GCM` mode of the current `Bark v1.4.3(5)` version is not fully supported yet and will need to be enabled in a future version. [Allows use of GCM Mode#262](https://github.com/Finb/Bark/commit/8a2a7fc2b44073498e4abea54f62497a0e06926e).
+> - `ECB` mode is not recommended: identical plaintext blocks produce identical ciphertext, which can reveal patterns in the push content. `F2` keeps `ECB` only for compatibility with the matching `Bark` option and logs a security warning when it is used.
 > - For more information, see `Bark`'s [Push Encryption](https://bark.day.app/#/encryption).
 
 ### `--title`
@@ -216,6 +220,14 @@ Example: `--proxies http://x.x.x.x https://x.x.x.x`。
 
 > [!IMPORTANT] IMPORTANT ❗❗❗
 > **If the proxy does not support egress HTTPS, use: `--proxies http://x.x.x.x http://x.x.x.x`.**
+
+### `--insecure`
+
+Disable `TLS` certificate verification. Use it only behind a trusted debugging proxy. The flag affects the current run only and is not written to the configuration file; set `verify: false` in `conf.yaml` to disable it permanently. See [TLS certificate verification](/en/site-config#tls-certificate-verification).
+
+```bash
+f2 bk --insecure --proxies http 127.0.0.1:8888 ...
+```
 
 ### `--update-config`
 

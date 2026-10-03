@@ -12,21 +12,45 @@ from f2.apps.douyin.db import AsyncUserDB
 from f2.apps.douyin.utils import format_file_name, json_2_lrc
 from f2.cli.cli_console import RichConsoleManager
 from f2.dl.base_downloader import BaseDownloader
+from f2.exceptions.conf_exceptions import ConfError
 from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
 from f2.utils.time.filter import filter_by_date_interval
-from f2.utils.time.timestamp import get_timestamp, timestamp_2_str
+from f2.utils.time.timestamp import get_timestamp, parse_interval, timestamp_2_str
 
 
 class DouyinDownloader(BaseDownloader):
+    # 已知的作品类型 aweme_type。下载时不再按这份名单判断（见 download_media），
+    # 这里只作记录；含义未确认的类型只注明来源，不要据此推断用途。
+    #
+    #   类型   下载方式   说明
+    #   0      视频       普通视频
+    #   4      视频       含义未确认，#281 反馈后加入
+    #   51     视频       含义未确认，#402 确认数据结构与视频相同
+    #   53     视频       含义未确认，#402 确认数据结构与视频相同
+    #   55     视频       含义未确认，最早的版本即已支持
+    #   61     视频       含义未确认，最早的版本即已支持
+    #   66     视频       含义未确认，#402 确认数据结构与视频相同
+    #   68     图集       图文作品，可能带有实况视频
+    #   109    视频       含义未确认，最早的版本即已支持
+    #   201    视频       含义未确认，2024 年加入
+    #
+    # 名单之外的类型：带有图片时按图集下载，有视频链接时按视频下载，两者都没有时给出警告。
+    IMAGE_AWEME_TYPES = frozenset({68})
+
     def __init__(self, kwargs: Optional[dict] = None):
         kwargs = kwargs or {}
-        if kwargs["cookie"] is None:
-            raise ValueError(
+        # 只检查是否提供了 cookie：空字符串允许通过，抖音直播等请求不需要用户的 cookie
+        if kwargs.get("cookie") is None:
+            raise ConfError(
                 _(
                     "cookie不能为空。请提供有效的 cookie 参数，或自动从浏览器获取。如 `--auto-cookie edge`"
-                )
+                ),
+                key="cookie",
             )
+
+        # 日期区间格式错误时在请求前报错，否则各模式会翻完所有页面，却因筛选失败一个都不下载
+        parse_interval(kwargs.get("interval"))
 
         super().__init__(kwargs)
         self._live_status_callback_user_id = None  # 用于回调函数的user_id
@@ -164,13 +188,34 @@ class DouyinDownloader(BaseDownloader):
                 if self.kwargs.get(task_name):
                     await task_func()
 
-            if aweme_type in [0, 4, 55, 61, 109, 201]:
-                await self.download_video()
-            elif aweme_type == 68:
-                await self.download_images()
+            await self.download_media(aweme_type)
+        else:
+            logger.warning(
+                _("[{0}] 作品的可见状态 private_status={1} 不支持下载，已跳过").format(
+                    self.aweme_id, aweme_status
+                )
+            )
 
         # 保存最后一个 aweme_id
         await self.save_last_aweme_id(self.sec_user_id, self.aweme_id)
+
+    async def download_media(self, aweme_type: Any) -> None:
+        """
+        按作品数据选择下载内容：图集类型或带有图片时下载图集，否则有视频链接就下载视频
+
+        Args:
+            aweme_type (Any): 作品类型
+        """
+        if aweme_type in self.IMAGE_AWEME_TYPES or self.aweme_data_dict.get("images"):
+            await self.download_images()
+        elif self.aweme_data_dict.get("video_play_addr"):
+            await self.download_video()
+        else:
+            logger.warning(
+                _("[{0}] 作品类型 {1} 没有可下载的视频或图片").format(
+                    self.aweme_id, aweme_type
+                )
+            )
 
     async def download_music(self):
         if self.aweme_data_dict.get("music_status") == 1:

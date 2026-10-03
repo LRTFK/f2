@@ -1,11 +1,14 @@
 # path: f2/dl/base_downloader.py
 
 import asyncio
+import contextlib
 import hashlib
+import os
+import re
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import aiofiles  # type: ignore
 import httpx
@@ -16,8 +19,10 @@ from f2.crawlers.base_crawler import BaseCrawler
 from f2.dl.m3u8 import M3U8DownloadMixin
 from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
+from f2.utils.core.run_report import record_failed_download
 from f2.utils.core.signal import SignalManager
-from f2.utils.file.path import ensure_path
+from f2.utils.file.name import fit_filename
+from f2.utils.file.path import ensure_path, long_path
 from f2.utils.http.utils import (
     get_chunk_size,
     get_content_length,
@@ -85,6 +90,44 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
     def _ensure_path(path: Union[str, Path]) -> Path:
         return ensure_path(path)
 
+    def _build_target(
+        self,
+        base_path: Union[str, Path],
+        file_name: str,
+        file_suffix: Optional[str],
+    ) -> Tuple[str, Path]:
+        """
+        拼出文件名与保存路径 (Build the file name and the save path)
+
+        文件名连同后缀不超过 255 字节，超出时截断中间部分，
+        否则在按字节限制文件名长度的文件系统（如 NAS）上无法创建；
+        Windows 下路径较长时改用扩展长度路径，不受 260 个字符的限制。
+        """
+        file_path = fit_filename(file_name, file_suffix or "")
+        return file_path, long_path(self._ensure_path(base_path) / file_path)
+
+    async def _record_local_file_error(
+        self, task_id: TaskID, full_path: Path, error: OSError
+    ) -> None:
+        """
+        本地文件无法创建或写入时记为下载失败，不影响其它下载任务
+        (Record a failed download when the local file cannot be created or written)
+
+        路径过长、名称含系统不支持的字符、没有写入权限或磁盘已满都会导致这类错误，
+        换一个下载链接也无法解决，所以不再重试。
+        """
+        logger.error(
+            _("无法写入文件 {0}：{1}").format(full_path, error.strerror or error)
+        )
+        record_failed_download(str(full_path))
+        await self.progress.update(
+            task_id,
+            description=_("[red][  失败  ]：[/red]"),
+            filename=trim_filename(full_path.name, 45),
+            state="error",
+            visible=False,
+        )
+
     async def _download_chunks(
         self,
         request: httpx.Request,
@@ -138,6 +181,31 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
             trace_logger.error(traceback.format_exc())
             logger.error(_("文件区块下载失败：{0} Exception：{1}").format(request, e))
 
+    @staticmethod
+    def _parse_content_range_start(response: httpx.Response) -> Optional[int]:
+        """
+        解析 Content-Range 头中的起始字节 (Parse the start byte of the Content-Range header)
+
+        Args:
+            response (httpx.Response): 响应对象，Content-Range 形如 "bytes 1000-9999/10000"
+
+        Returns:
+            Optional[int]: 起始字节，头缺失或无法解析时返回 None
+        """
+        match = re.match(r"bytes\s+(\d+)-", response.headers.get("Content-Range", ""))
+        return int(match.group(1)) if match else None
+
+    @staticmethod
+    async def _rewind_file(file: Any, size: int) -> None:
+        """
+        把文件截断到 size 字节并把写入位置移到末尾 (Truncate the file to size bytes)
+
+        用于丢弃本次调用中已写入但需要重新下载的数据。
+        """
+        await file.flush()
+        await file.truncate(size)
+        await file.seek(size)
+
     async def _download_chunks_optimized(
         self,
         request: httpx.Request,
@@ -147,14 +215,17 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
         start_byte: int = 0,
     ) -> bool:
         """
-        优化的分块下载方法，支持更好的异步性能和错误处理
+        优化的分块下载方法，支持断点续传、重试与错误处理
+
+        重试时从"已写入文件的位置"继续请求，不会重复写入已下载的字节；
+        当服务器忽略 Range 返回 200 时，会丢弃文件中已有内容后从头写入。
 
         Args:
             request (httpx.Request): HTTP请求对象
             file: 文件对象
             content_length (int): 内容长度
             task_id (TaskID): 任务ID
-            start_byte (int): 开始下载的字节位置，默认为0
+            start_byte (int): 开始下载的字节位置（文件中已有的字节数），默认为0
 
         Returns:
             bool: 下载是否成功
@@ -162,17 +233,23 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
         retry_count = 0
         max_retries = 3
 
-        while retry_count < max_retries:
-            downloaded_bytes = 0  # 每次重试时重置下载字节数
+        # base：调用前文件中已有的字节数（续传起点）
+        # written：本次调用已写入文件的字节数，跨重试保留，重试时从 base + written 继续
+        base = start_byte
+        written = 0
 
+        while retry_count < max_retries:
             try:
                 # 使用更优化的超时配置
                 timeout = httpx.Timeout(connect=15.0, read=60.0, write=30.0, pool=30.0)
 
-                # 更新请求头中的Range，以支持断点续传
-                current_headers = dict(request.headers)
-                if start_byte + downloaded_bytes > 0:
-                    current_headers["Range"] = f"bytes={start_byte + downloaded_bytes}-"
+                # 每次（重）发请求都从文件当前末尾继续
+                offset = base + written
+                current_headers = {
+                    k: v for k, v in request.headers.items() if k.lower() != "range"
+                }
+                if offset > 0:
+                    current_headers["Range"] = f"bytes={offset}-"
 
                 # 使用更简单的方式发送请求，让httpx处理重定向
                 async with self.aclient.stream(
@@ -182,12 +259,34 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                     timeout=timeout,
                     follow_redirects=True,  # 让httpx自动处理重定向
                 ) as response:
+                    status_code = response.status_code
 
-                    # 检查状态码
-                    if response.status_code not in (200, 206):
+                    if status_code == 200 and offset > 0:
+                        # 服务器忽略了 Range 并返回整个文件：丢弃已有内容，从头写入
+                        logger.warning(
+                            _(
+                                "服务器不支持断点续传，丢弃已下载的 {0} 字节后重新下载"
+                            ).format(offset)
+                        )
+                        await self._rewind_file(file, 0)
+                        base, written, offset = 0, 0, 0
+                    elif status_code == 206:
+                        range_start = self._parse_content_range_start(response)
+                        if range_start is not None and range_start != offset:
+                            logger.warning(
+                                _(
+                                    "服务器返回的续传起点 {0} 与请求的 {1} 不一致，重试 {2}/{3}"
+                                ).format(
+                                    range_start, offset, retry_count + 1, max_retries
+                                )
+                            )
+                            retry_count += 1
+                            await asyncio.sleep(2**retry_count)  # 指数退避
+                            continue
+                    elif status_code != 200:
                         logger.warning(
                             _("下载响应状态码异常: {0}，重试 {1}/{2}").format(
-                                response.status_code, retry_count + 1, max_retries
+                                status_code, retry_count + 1, max_retries
                             )
                         )
                         retry_count += 1
@@ -231,7 +330,6 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                             return False
 
                         buffer.extend(chunk)
-                        downloaded_bytes += len(chunk)
 
                         # 智能缓冲区写入策略
                         # 1. 当缓冲区满时写入
@@ -239,20 +337,18 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                         # 3. 批量更新进度条减少UI刷新频率
                         if len(buffer) >= buffer_size:
                             await file.write(buffer)
+                            written += len(buffer)
                             # 对于大文件，减少flush频率以提高性能
                             if content_length > 50 * 1024 * 1024:  # > 50MB时减少flush
-                                if (
-                                    downloaded_bytes % (buffer_size * 4) == 0
-                                ):  # 每16MB flush一次
+                                if written % (buffer_size * 4) == 0:  # 每16MB flush一次
                                     await file.flush()
                             else:
                                 await file.flush()  # 小文件每次都flush确保数据安全
 
                             # 异步更新进度 - 使用 completed 而非 advance 来确保进度准确
-                            current_completed = start_byte + downloaded_bytes
                             await self.progress.update(
                                 task_id,
-                                completed=current_completed,
+                                completed=base + written,
                                 total=content_length,
                             )
                             buffer.clear()
@@ -260,11 +356,11 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                     # 写入剩余缓冲区数据
                     if buffer:
                         await file.write(buffer)
+                        written += len(buffer)
                         await file.flush()  # 最后确保所有数据都写入磁盘
-                        current_completed = start_byte + downloaded_bytes
                         await self.progress.update(
                             task_id,
-                            completed=current_completed,
+                            completed=base + written,
                             total=content_length,
                         )
 
@@ -274,14 +370,14 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                 retry_count += 1
                 wait_time = min(2**retry_count, 30)  # 最大等待30秒
                 logger.warning(
-                    _("下载超时，{0} 秒后重试 ({1}/{2}): {3}").format(
-                        wait_time, retry_count, max_retries, str(e)
+                    _("下载超时，{0} 秒后从 {1} 字节继续重试 ({2}/{3}): {4}").format(
+                        wait_time, base + written, retry_count, max_retries, str(e)
                     )
                 )
-                # 重置进度到开始位置
+                # 进度回退到已写入文件的位置
                 await self.progress.update(
                     task_id,
-                    completed=start_byte,
+                    completed=base + written,
                     total=content_length,
                 )
                 if retry_count < max_retries:
@@ -294,7 +390,7 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                     )
                     return False
 
-            except httpx.HTTPStatusError as e:
+            except httpx.HTTPStatusError:
                 # 对于HTTP错误，不重试，直接失败
                 trace_logger.error(traceback.format_exc())
                 await self.progress.update(
@@ -305,14 +401,14 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
             except Exception as e:
                 retry_count += 1
                 logger.warning(
-                    _("下载异常，重试 ({0}/{1}): {2}").format(
-                        retry_count, max_retries, str(e)
+                    _("下载异常，从 {0} 字节继续重试 ({1}/{2}): {3}").format(
+                        base + written, retry_count, max_retries, str(e)
                     )
                 )
-                # 重置进度到开始位置
+                # 进度回退到已写入文件的位置
                 await self.progress.update(
                     task_id,
-                    completed=start_byte,
+                    completed=base + written,
                     total=content_length,
                 )
                 if retry_count < max_retries:
@@ -422,17 +518,22 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
             # 如果urls是单个链接，则转换为列表以便统一处理
             urls = [urls] if isinstance(urls, str) else urls
 
-            # 确保目标路径存在
             full_path = self._ensure_path(full_path)
-            full_path.parent.mkdir(parents=True, exist_ok=True)
             tmp_path = full_path.with_suffix(".tmp")
+
+            # 确保目标路径存在，无法创建时不发起请求
+            try:
+                full_path.parent.mkdir(parents=True, exist_ok=True)
+            except OSError as e:
+                await self._record_local_file_error(task_id, full_path, e)
+                return
 
             # 遍历所有链接
             for link_index, link in enumerate(urls):
                 try:
                     # 获取文件内容大小
                     content_length = await get_content_length(
-                        link, self.headers, self.proxies
+                        link, self.headers, self.proxies, verify=self._verify
                     )
 
                     if content_length == 0:
@@ -581,6 +682,11 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                             )
                             continue
 
+                    except OSError as e:
+                        # 本地文件无法创建或改名，换链接也无济于事
+                        await self._record_local_file_error(task_id, full_path, e)
+                        return
+
                     except Exception as e:
                         logger.error(_("下载过程异常: {0}").format(str(e)))
                         # 清理异常产生的临时文件
@@ -604,8 +710,9 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                     )
                     continue
 
-            # 所有链接都失败
+            # 所有链接都失败：计入本次运行结果，CLI 结束时据此返回非零退出码
             logger.warning(_("所有链接都无法下载"))
+            record_failed_download(str(full_path))
             # 清理可能残留的临时文件
             tmp_path.unlink(missing_ok=True)
             await self.progress.update(
@@ -630,9 +737,7 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
             content (Any): 文件内容 (File content)
             full_path (Union[str, Path]): 保存路径 (Save path)
         """
-        # 确保目标路径存在 (Ensure target path exists)
         full_path = self._ensure_path(full_path)
-        full_path.parent.mkdir(parents=True, exist_ok=True)
 
         # 确定打开文件的模式 (Determine the mode in which the file is opened)
         mode = "wb" if isinstance(content, bytes) else "w"
@@ -646,9 +751,18 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
         await self.progress.update(
             task_id, advance=1024, total=int(sys.getsizeof(content))
         )
-        # 创建异步文件对象并写入内容 (Create an async file object and write content)
-        async with aiofiles.open(**open_params) as f:  # type: ignore
-            await f.write(content)
+        # 确保目标路径存在后写入内容，无法写入时记为失败，不影响其它任务
+        # (Ensure the target directory exists, then write; failures don't stop other tasks)
+        try:
+            full_path.parent.mkdir(parents=True, exist_ok=True)
+            async with aiofiles.open(**open_params) as f:  # type: ignore
+                await f.write(content)
+        except OSError as e:
+            # 写到一半失败时删除残缺的文件，避免下次被当成已下载而跳过
+            with contextlib.suppress(OSError):
+                full_path.unlink(missing_ok=True)
+            await self._record_local_file_error(task_id, full_path, e)
+            return
 
         logger.info(_("[green][  完成  ]：{0}[/green]").format(Path(full_path).name))
         await self.progress.update(
@@ -686,12 +800,11 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
                 it represents multiple links to the file)
         """
 
-        # 文件路径
-        file_path = f"{file_name}{file_suffix}"
-        # 文件全路径
-        full_path = self._ensure_path(base_path) / file_path
+        # 文件名与全路径
+        file_path, full_path = self._build_target(base_path, file_name, file_suffix)
 
-        if full_path.exists():
+        # Path.exists 遇到文件名过长等错误会直接抛出异常，os.path.exists 则返回 False
+        if os.path.exists(full_path):
             logger.info(_("[cyan][  跳过  ]: {0}[/cyan]").format(Path(full_path).name))
             task_id = await self.progress.add_task(
                 description=_("[cyan][  跳过  ]:[/cyan]"),
@@ -734,12 +847,11 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
             file_suffix (Optional[str]): 文件后缀 (File suffix)
         """
 
-        # 文件路径
-        file_path = f"{file_name}{file_suffix}"
-        # 文件全路径
-        full_path = self._ensure_path(base_path) / file_path
+        # 文件名与全路径
+        file_path, full_path = self._build_target(base_path, file_name, file_suffix)
 
-        if full_path.exists():
+        # Path.exists 遇到文件名过长等错误会直接抛出异常，os.path.exists 则返回 False
+        if os.path.exists(full_path):
             logger.info(_("[cyan][  跳过  ]: {0}[/cyan]").format(Path(full_path).name))
             task_id = await self.progress.add_task(
                 description=_("[cyan][  跳过  ]:[/cyan]"),
@@ -783,12 +895,11 @@ class BaseDownloader(M3U8DownloadMixin, BaseCrawler):
             file_suffix (Optional[str]): 文件后缀 (File suffix)
             stream_status_callback: 直播状态检查回调函数（可选）
         """
-        # 文件路径
-        file_path = f"{file_name}{file_suffix}"
-        # 文件全路径
-        full_path = self._ensure_path(base_path) / file_path
+        # 文件名与全路径
+        file_path, full_path = self._build_target(base_path, file_name, file_suffix)
 
-        if full_path.exists():
+        # Path.exists 遇到文件名过长等错误会直接抛出异常，os.path.exists 则返回 False
+        if os.path.exists(full_path):
             logger.info(_("[cyan][  跳过  ]: {0}[/cyan]").format(Path(full_path).name))
             task_id = await self.progress.add_task(
                 description=_("[cyan][  跳过  ]:[/cyan]"),

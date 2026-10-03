@@ -32,9 +32,11 @@ from f2.apps.twitter.utils import (
 )
 from f2.cli.cli_console import RichConsoleManager
 from f2.exceptions.api_exceptions import APIResponseError
+from f2.exceptions.base import F2Error
 from f2.i18n.translator import _
 from f2.log.logger import logger
-from f2.utils.core.decorators import mode_function_map, mode_handler
+from f2.utils.core.decorators import get_mode_handlers, mode_handler
+from f2.utils.file.path import is_user_folder_migrated
 from f2.utils.time.timestamp import get_timestamp, timestamp_2_str, interval_2_timestamp
 
 rich_console = RichConsoleManager().rich_console
@@ -141,6 +143,17 @@ class TwitterHandler:
         if not local_user_data:
             await db.add_user_info(**current_user_data._to_dict())
             logger.debug(_("用户：{0} 已添加到数据库").format(current_nickname))
+        # 昵称变化且各下载模式的旧目录都已改名时，把数据库中的昵称改为新昵称，
+        # 以后再改名时从新昵称开始处理；还有旧目录时保留旧昵称，下次运行继续处理
+        elif is_user_folder_migrated(
+            kwargs, "twitter", local_user_data.get("nickname"), current_nickname
+        ):
+            await db.update_user_info(
+                uniqueId=uniqueId,
+                nickname=current_nickname,
+                nickname_raw=current_user_data.nickname_raw,
+            )
+            logger.debug(_("用户：{0} 的新名称已更新到数据库").format(current_nickname))
 
         return user_path
 
@@ -190,7 +203,7 @@ class TwitterHandler:
         async with TwitterCrawler(self.kwargs) as crawler:
             params = TweetDetailEncode(focalTweetId=tweet_id)
             response = await crawler.fetch_tweet_detail(params)
-            tweet = TweetDetailFilter(response)
+            tweet = TweetDetailFilter(response, tweet_id)
 
         logger.info(
             _("推文ID：{0} 文案：{1} 作者：{2} 阅读量：{3}").format(
@@ -279,7 +292,8 @@ class TwitterHandler:
 
         max_counts = max_counts or float("inf")
         tweets_collected = 0
-        nickname_raw = ""  # 初始化变量，避免未定义错误
+        # 默认使用 userId：第一页就结束时，nickname_raw 也有值（#401）
+        nickname_raw = userId
 
         # 处理 interval 参数
         interval = self.kwargs.get("interval")
@@ -346,8 +360,9 @@ class TwitterHandler:
 
             yield tweet
 
-            # 防止最后一页不包含任何作品导致无法获取nickname_raw
-            nickname_raw = tweet.nickname_raw[0]
+            # 只在本页有推文时更新昵称，最后一页可能不包含任何推文
+            if tweet.nickname_raw:
+                nickname_raw = tweet.nickname_raw[0]
 
             # 更新已经处理的推文数量 (Update the number of videos processed)
             tweets_collected += len(list(filter(None, tweet.tweet_id)))
@@ -606,7 +621,8 @@ class TwitterHandler:
 
 async def main(kwargs):
     mode = kwargs.get("mode")
-    if mode in mode_function_map:
-        await mode_function_map[mode](TwitterHandler(kwargs))
+    handlers = get_mode_handlers(__name__)
+    if mode in handlers:
+        await handlers[mode](TwitterHandler(kwargs))
     else:
-        logger.error(_("不存在该模式: {0}").format(mode))
+        raise F2Error(_("不存在该模式: {0}").format(mode))

@@ -46,9 +46,9 @@ If you see `WARNING: No matching works were found`, check if you have configured
 
 ::: details :link: Solution
 1. Ensure `interval: all` is set if the `interval` parameter is missing.
-2. If `interval` is present, verify its value.
+2. If `interval` is present, make sure the range covers the publish time of the works you want (both days are included, in Beijing time). An invalid value makes `F2` exit with an error before any request, so this warning means the format is valid but no works fall within the range.
 3. The `-i` flag also sets the content filter. Set it to `-i all`.
-4. If you use `-i`, ensure it's configured correctly.
+4. If you use `-i`, likewise make sure the range covers the works you want.
 :::
 **Reference Links:**
 - https://github.com/Johnserf-Seed/f2/issues/42
@@ -83,6 +83,41 @@ Non-project issue, requires investigation.
 4. Adjust timeout settings.
 :::
 
+## CERTIFICATE_VERIFY_FAILED
+
+`certificate verify failed` or `CERTIFICATE_VERIFY_FAILED` means `F2` could not verify the server certificate. `F2` verifies certificates for every `HTTPS` request by default.
+
+::: details :link: Solutions
+1. Check the system clock and make sure the root certificates are up to date (`pip install -U certifi` refreshes the bundle).
+2. Behind a capture tool or corporate proxy with a self-signed certificate, put its `CA` bundle path into `verify` in `conf.yaml`.
+3. Only in a trusted debugging environment, disable verification temporarily with `--insecure`, or set `verify: false` in `conf.yaml`. See [TLS certificate verification](/en/site-config#tls-certificate-verification).
+:::
+
+## douyin 403 Forbidden: Blocked by ArgusSecurityPlugin
+
+If downloading `douyin` posts, single videos, likes or collections fails with `403 Forbidden`, and opening the API URL directly shows `Blocked by ArgusSecurityPlugin Uifid Not Found`, it is because Douyin added an ArgusSecurityPlugin check to its API gateway in August 2026: requests without the `x-tt-argus` header are blocked.
+
+Recent versions of `F2` attach `x-tt-argus` automatically and send the `UIFID` cookie value (`UIFID_TEMP` when logged out) as the `uifid` header, so no manual configuration is needed.
+
+::: details :link: Solution
+1. Upgrade `F2` to the latest version.
+2. If the 403 persists, copy the complete `cookie` from your browser again instead of only a few fields.
+3. The gateway currently only checks that `x-tt-argus` is present. If it starts validating the value in the future, override the defaults with the values from your browser's requests in the `douyin.headers` section of `conf.yaml`:
+
+```yaml
+f2:
+  douyin:
+    headers:
+      User-Agent: ...
+      Referer: https://www.douyin.com/
+      x-tt-argus: copy from the request headers in your browser's developer tools
+      uifid: copy from the request headers in your browser's developer tools
+```
+:::
+**Reference Links:**
+- https://github.com/Johnserf-Seed/f2/issues/443
+- https://github.com/Johnserf-Seed/f2/pull/446
+
 ## tiktok 403 Forbidden
 
 A `403 Forbidden` error when downloading TikTok videos occurs due to the `device_Id`being banned.
@@ -99,6 +134,22 @@ Device IDs are tied to `cookies`, and a banned device ID results in invalid cook
 - https://f2.wiki/guide/apps/tiktok/overview#%E7%94%9F%E6%88%90deviceid-%F0%9F%9F%A2
 - https://github.com/Johnserf-Seed/f2/issues/79
 - https://github.com/Johnserf-Seed/f2/issues/154
+
+## tiktok Empty Response with Status Code 200
+
+When TikTok web APIs (`www.tiktok.com/api/...` and the live APIs under `webcast.tiktok.com/webcast/...`) return `200` with an empty body and the log says the retry limit was reached, the request was blocked by risk control, and the response carries the header `tt_orcas_res: 1`. There are two common causes:
+
+1. Client fingerprint: these APIs check the TLS and HTTP/2 fingerprints, so requests sent by `httpx` are blocked even when the signature is correct. `F2` automatically impersonates Chrome for these requests through `curl_cffi`, and logs a hint when `curl_cffi` is missing.
+2. Guest cookie: APIs such as user profile only accept a logged-in `cookie`, while user posts can also be fetched with a guest `cookie`.
+
+::: details :link: Solution
+1. Update to the development branch `v0.0.1.8-pw3` or a later release, which installs `curl_cffi` as a dependency. If the log says `curl_cffi` is not installed (for example after installing with `--no-deps`), run `pip install curl_cffi` and try again.
+2. Use a logged-in `cookie` in the config file; see "Empty Response on the nth Request" on this page for how to get it.
+3. `msToken` is read from the `cookie`. It does not need to be configured separately and must not be faked: a fake value also leads to empty responses.
+:::
+**Reference Links:**
+- https://f2.wiki/en/guide/apps/tiktok/overview#generate-new-signature-parameters-using-api-model-%F0%9F%9F%A2
+- https://github.com/Johnserf-Seed/f2/issues/384
 
 ## TypeError: object of type 'NoneType' has no len()
 
@@ -125,14 +176,14 @@ Once feedback is received, the issue will be addressed in the next version, or y
 
 ## twitter 403 Forbidden
 
-A `403 Forbidden` error when downloading Twitter posts is caused by an expired `cookie` or `X-Csrf-Token`.
+A `403 Forbidden` error when downloading Twitter posts is usually caused by an expired `cookie`, or by an `X-Csrf-Token` that does not match the `cookie`.
 
 ::: details :link: Solution
-1. Regenerate the `cookie` and `X-Csrf-Token`.
-2. Update the `cookie` and `X-Csrf-Token` in the config files.
+1. Log in and copy the complete `cookie` from your browser again. It should contain `auth_token` and `ct0`.
+2. Replace the `cookie` in the config files.
 3. Retry the download command.
 
-The `X-Csrf-Token` is in the `F2 config file (conf.yaml)`, while the cookie is in the app's main or custom config files.
+`F2` automatically uses the `ct0` value in the `cookie` as the `X-Csrf-Token`, so you usually do not need to configure it separately. The `X-Csrf-Token` in the `F2 config file (conf.yaml)` is only used when the `cookie` has no `ct0`. The cookie is in the app's main or custom config files.
 :::
 
 ## Installing build dependencies error
@@ -197,3 +248,33 @@ curl --proxy http://127.0.0.1:8080 https://httpbin.org/ip
 5. Try different proxy servers or types
 6. Check proxy logs for error messages
 :::
+
+## Auto Cookie Failed: Unable to get key for cookie decryption
+
+This error with `--auto-cookie chrome` or `--auto-cookie edge` usually means the latest Chrome or Edge on Windows (versions released after August 2024) stores cookies with app-bound encryption, which `browser_cookie3` (currently 0.20.1), the library `F2` uses, cannot decrypt yet. On macOS, it usually means access was not allowed in the Keychain prompt.
+
+::: details :link: Solution
+1. Log in with Firefox and use `--auto-cookie firefox`; Firefox is not affected.
+2. Log in in the browser and copy the cookie manually, then put it in the `cookie` setting of your config file or pass it with `-k`; see the `--cookie` section of each app for how to get it.
+3. On macOS, run the command again and choose "Allow" in the Keychain prompt.
+4. If you see `Unable to read database file` or a request to close all browser processes, the browser is still running and its cookie database is in use; close the browser completely and try again.
+:::
+
+::: tip :bulb: Tip
+When fetching fails, `F2` leaves the config file unchanged and exits with code `1`.
+:::
+
+**Reference Links:**
+- https://github.com/Johnserf-Seed/f2/issues/193
+- https://github.com/borisbabic/browser_cookie3/issues/210
+
+## Douyin Video Is Not the Highest Quality
+
+`F2` picks the variant with the highest resolution among all qualities returned by the API, and the one with the higher bitrate when resolutions are equal. Some works offer 2K or 4K in the app while the web API only returns up to 1080p; in that case only 1080p can be downloaded.
+
+::: tip :bulb: Tip
+The highest quality is sometimes only available in H.265 (HEVC), which older players may not play. Use a player that supports H.265, such as VLC or PotPlayer; the built-in Windows player needs the HEVC Video Extensions.
+:::
+
+**Reference Links:**
+- https://github.com/Johnserf-Seed/f2/issues/214

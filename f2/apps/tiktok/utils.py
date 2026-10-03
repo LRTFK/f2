@@ -6,6 +6,7 @@ import re
 import traceback
 from pathlib import Path
 from typing import Optional, Union
+from urllib.parse import quote
 
 import httpx
 
@@ -23,8 +24,10 @@ from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
 from f2.utils.config.conf_manager import ConfigManager
 from f2.utils.crypto.bytedance.xbogus import XBogus as XB
+from f2.utils.crypto.bytedance.xgnarly import XGnarly
 from f2.utils.file.name import split_filename
-from f2.utils.http.cookie import split_set_cookie
+from f2.utils.file.path import get_user_folder_path, migrate_user_folders
+from f2.utils.http.cookie import join_set_cookie_headers, parse_cookie_str
 from f2.utils.string.formatter import extract_valid_urls
 from f2.utils.string.generator import gen_random_str
 from f2.utils.time.timestamp import get_timestamp
@@ -97,6 +100,7 @@ class TokenManager(BaseCrawler):
 
     该类继承自 BaseCrawler，利用其中的 client 进行 HTTP 请求。主要包含以下方法：
     - gen_real_msToken: 生成真实的 msToken。
+    - cached_msToken: 返回进程内缓存的真实 msToken，首次调用时才生成。
     - gen_false_msToken: 生成虚假的 msToken。
     - gen_ttwid: 生成 ttwid。
     - gen_odin_tt: 生成 odin_tt。
@@ -128,6 +132,8 @@ class TokenManager(BaseCrawler):
         "Referer": ClientConfManager.referer(),
         "User-Agent": user_agent,
     }
+    # 进程内缓存的真实 msToken，由 cached_msToken 按需生成
+    _msToken_cache: Optional[str] = None
 
     def __init__(self):
         super().__init__(proxies=self.proxies)
@@ -166,9 +172,10 @@ class TokenManager(BaseCrawler):
             )
             response.raise_for_status()
 
-            msToken = str(httpx.Cookies(response.cookies).get("msToken"))
+            msToken = httpx.Cookies(response.cookies).get("msToken")
 
-            if len(msToken) != 152 or msToken is None:
+            # 长度随 SDK 版本变化（2026-09 起为 168，此前为 152），只检查是否下发
+            if not msToken:
                 raise APIResponseError(_("{0} 内容不符合要求").format("msToken"))
 
             logger.debug(_("生成真实的 msToken：{0}").format(msToken))
@@ -233,6 +240,29 @@ class TokenManager(BaseCrawler):
                     exc,
                 )
             )
+
+    @classmethod
+    def cached_msToken(cls) -> str:
+        """
+        返回进程内缓存的真实 msToken。
+
+        首次调用时才通过 gen_real_msToken 联网生成，之后复用同一个值；
+        请求模型以此作为 msToken 的默认值，因此导入模块不会联网。
+        生成失败时不缓存，下一次调用会重新生成。
+
+        Returns:
+            str: 真实的 msToken。
+
+        Raises:
+            APITimeoutError: 请求超时错误。
+            APIConnectionError: 网络连接错误。
+            APIUnauthorizedError: 请求协议错误。
+            APIResponseError: 状态码错误或响应内容不符合要求。
+        """
+
+        if cls._msToken_cache is None:
+            cls._msToken_cache = cls.gen_real_msToken()
+        return cls._msToken_cache
 
     @classmethod
     def gen_false_msToken(cls) -> str:
@@ -473,6 +503,57 @@ class XBogusManager:
         return final_endpoint
 
 
+class XGnarlyManager:
+    """
+    为 TikTok 网页接口生成签名参数 (Sign TikTok web API requests)
+
+    按网页 SDK 的顺序在业务参数之后追加 X-Dynosaur、msToken、X-Bogus（固定为 1）与 X-Gnarly。
+    参数值与网页一样按 RFC 3986 编码（括号、分号、斜杠等都会编码），签名覆盖的就是这串字节，
+    签名后不能再重新编码；msToken 只取 cookie 中已有的值，没有时留空，不会伪造，
+    伪造的 msToken 会让接口返回空内容。
+    """
+
+    @classmethod
+    def model_2_endpoint(
+        cls,
+        user_agent: str,
+        base_endpoint: str,
+        params: dict,
+        cookie: str = "",
+    ) -> str:
+        """
+        返回带签名参数的请求地址 (Return the signed request URL)
+
+        Args:
+            user_agent (str): 请求使用的 User-Agent，必须与请求头一致
+            base_endpoint (str): 接口地址
+            params (dict): 业务参数，按字典顺序拼接
+            cookie (str): 请求使用的 cookie，从中读取 msToken
+
+        Returns:
+            str: 签名后的请求地址
+        """
+        # 检查params是否是一个字典 (Check if params is a dict)
+        if not isinstance(params, dict):
+            raise TypeError(_("参数必须是字典类型"))
+
+        ms_token = parse_cookie_str(cookie or "").get("msToken", "")
+        # 2026-09-26 的浏览器抓包中，X-Dynosaur 的查询串哈希对应按 RFC 3986 完整编码的参数值，
+        # 编码后的内容只含非保留字符与 %XX，encode_query 不会再改动
+        pairs = [
+            (str(key), quote(str(value), safe="")) for key, value in params.items()
+        ]
+
+        try:
+            signed_query, _unused = XGnarly(user_agent).sign(pairs, ms_token=ms_token)
+        except Exception as e:
+            raise ValueError(_("生成 X-Gnarly 失败：{0}").format(e)) from e
+
+        # 检查base_endpoint是否已有查询参数 (Check if base_endpoint already has query parameters)
+        separator = "&" if "?" in base_endpoint else "?"
+        return f"{base_endpoint}{separator}{signed_query}"
+
+
 class SecUserIdFetcher(BaseCrawler):
     """
     SecUserIdFetcher 类用于从 TikTok 用户主页链接中提取用户的 sec_uid 和 unique_id。
@@ -485,6 +566,7 @@ class SecUserIdFetcher(BaseCrawler):
 
     类属性:
     - _TIKTOK_SECUID_PARREN: 编译后的正则表达式，用于匹配 sec_uid。
+    - _TIKTOK_SECUID_URL_PARREN: 编译后的正则表达式，用于从 /user/<sec_uid> 形式的链接中提取 sec_uid。
     - _TIKTOK_UNIQUEID_PARREN: 编译后的正则表达式，用于匹配 unique_id。
     - _TIKTOK_NOTFOUND_PARREN: 编译后的正则表达式，用于检查页面是否不存在。
     - proxies: 从 ClientConfManager 获取的代理配置。
@@ -524,11 +606,11 @@ class SecUserIdFetcher(BaseCrawler):
     _TIKTOK_SECUID_PARREN = re.compile(
         r"<script id=\"__UNIVERSAL_DATA_FOR_REHYDRATION__\" type=\"application/json\">(.*?)</script>"
     )
+    _TIKTOK_SECUID_URL_PARREN = re.compile(r"/user/(MS4wLjABAAAA[\w-]+)")
     _TIKTOK_UNIQUEID_PARREN = re.compile(r"/@([^/?]*)")
     _TIKTOK_NOTFOUND_PARREN = re.compile(r"notfound")
 
     proxies = ClientConfManager.proxies()
-    msToken = TokenManager.gen_real_msToken()
 
     def __init__(self):
         super().__init__(proxies=self.proxies)
@@ -563,14 +645,20 @@ class SecUserIdFetcher(BaseCrawler):
             raise APINotFoundError(_("输入的URL不合法。类名：{0}").format(cls.__name__))
         url = extracted_url
 
+        # /user/<sec_uid> 形式的链接本身带着 sec_uid，而它的页面里没有用户数据（#366），直接从链接提取
+        url_match = cls._TIKTOK_SECUID_URL_PARREN.search(url)
+        if url_match:
+            return url_match.group(1)
+
         # 创建一个实例以访问 aclient
         instance = cls()
 
         try:
+            # 主页 HTML 不需要 msToken，不带 cookie 也能取到 sec_uid（2026-09-26 实测）；
+            # 旧的 msToken 生成接口已失效，带上它反而会在请求前就报错
             headers = {
                 "User-Agent": ClientConfManager.user_agent(),
                 "Referer": url,
-                "Cookie": f"msToken={cls.msToken}",
             }
             response = await instance.aclient.get(
                 url, headers=headers, follow_redirects=True
@@ -1073,7 +1161,7 @@ class DeviceIdManager(BaseCrawler):
     类属性:
     - _DEVICE_ID_PARTTERN: 编译后的正则表达式，用于匹配设备 ID。
     - _DEVICE_ID_URL: 设备 ID 生成器的 URL。
-    - _DEVICE_ID_HEADERS: 设备 ID 生成器的请求头。
+    - _device_id_headers: 类方法，构建设备 ID 生成器的请求头。
     - proxies: 从 ClientConfManager 获取的代理配置。
 
     方法:
@@ -1117,15 +1205,15 @@ class DeviceIdManager(BaseCrawler):
     _DEVICE_ID_URL = "https://www.tiktok.com/"
     _DEVICE_ID_FULL_URL = "https://www.tiktok.com/explore"
 
-    _MSTOKEN = TokenManager.gen_real_msToken()
-    _DEVICE_ID_HEADERS = {
-        "User-Agent": ClientConfManager.user_agent(),
-        "Cookie": f"msToken={_MSTOKEN}",
-    }
     proxies = ClientConfManager.proxies()
 
     def __init__(self):
         super().__init__(proxies=self.proxies)
+
+    @classmethod
+    def _device_id_headers(cls) -> dict:
+        """设备 ID 生成器的请求头，首页 HTML 不需要 msToken (Headers for the device ID page)"""
+        return {"User-Agent": ClientConfManager.user_agent()}
 
     @classmethod
     async def gen_device_id(cls, full_cookie: bool = False) -> dict:
@@ -1157,7 +1245,7 @@ class DeviceIdManager(BaseCrawler):
                     if not full_cookie
                     else instance._DEVICE_ID_FULL_URL
                 ),
-                headers=instance._DEVICE_ID_HEADERS,
+                headers=instance._device_id_headers(),
                 follow_redirects=True,
             )
             response.raise_for_status()
@@ -1168,7 +1256,8 @@ class DeviceIdManager(BaseCrawler):
                 raise APIResponseError(_("未能找到所需的设备 ID 信息"))
 
             data = match.group(1).strip()
-            cookie = split_set_cookie(response.headers.get("Set-Cookie", ""))
+            # 逐个读取 Set-Cookie 头，避免值里带逗号时被截断（同 #434）
+            cookie = join_set_cookie_headers(response.headers)
             deviceId = (
                 json.loads(data)
                 .get("__DEFAULT_SCOPE__", {})
@@ -1270,6 +1359,26 @@ class DeviceIdManager(BaseCrawler):
         return {"deviceId": device_ids, "cookie": cookies}
 
 
+def normalize_cursor(cursor, default: Optional[int] = None) -> Optional[int]:
+    """
+    把分页游标统一转换为整数 (Normalize a pagination cursor to int)
+
+    TikTok 接口返回的 cursor 有时是字符串、有时是整数，与整数比较前需要先统一类型（#270）。
+
+    Args:
+        cursor: 接口返回或配置中的游标 (Cursor from the API or config)
+        default (Optional[int]): 无法解析时返回的值 (Value returned when parsing fails)
+
+    Returns:
+        Optional[int]: 整数游标 (Integer cursor)
+    """
+
+    try:
+        return int(cursor)
+    except (TypeError, ValueError):
+        return default
+
+
 def format_file_name(
     naming_template: str,
     aweme_data: Optional[dict] = None,
@@ -1351,25 +1460,13 @@ def create_user_folder(kwargs: dict, uniqueId: Union[str, int]) -> Path:
         (If kwargs is not in dict format, TypeError will be raised.)
     """
 
-    # 确定函数参数是否正确
-    if not isinstance(kwargs, dict):
-        raise TypeError("kwargs 参数必须是字典")
-
-    # 创建基础路径
-    base_path = Path(kwargs.get("path", "Download"))
-
-    # 添加下载模式和用户名
-    user_path = (
-        base_path / "tiktok" / kwargs.get("mode", "PLEASE_SETUP_MODE") / str(uniqueId)
-    )
-
-    # 获取绝对路径并确保它存在
-    resolve_user_path = user_path.resolve()
+    # 获取绝对路径，与重命名用户目录时的路径计算一致
+    user_path = get_user_folder_path(kwargs, "tiktok", uniqueId)
 
     # 创建目录
-    resolve_user_path.mkdir(parents=True, exist_ok=True)
+    user_path.mkdir(parents=True, exist_ok=True)
 
-    return resolve_user_path
+    return user_path
 
 
 def rename_user_folder(old_path: Path, new_uniqueId: str) -> Path:
@@ -1405,14 +1502,24 @@ def create_or_rename_user_folder(
 
     Returns:
         user_path (Path): 用户目录路径 (User directory path)
-    """
-    user_path = create_user_folder(kwargs, current_uniqueId)
 
-    if not local_user_data:
+    Note:
+        uniqueId 变化时，把各下载模式下旧 uniqueId 的目录都重命名为新 uniqueId，
+        已下载的文件随目录保留；某个模式下新 uniqueId 的目录已存在时，
+        该模式的两个目录都保持不变。
+        (When the uniqueId changes, the folders of the old uniqueId are renamed to the
+        new uniqueId in every download mode, keeping the downloaded files; in a mode
+        where a folder of the new uniqueId already exists, both folders are left as
+        they are.)
+    """
+    local_uniqueId = local_user_data.get("uniqueId") if local_user_data else None
+
+    if local_uniqueId and current_uniqueId and local_uniqueId != current_uniqueId:
+        # uniqueId不一致，把各下载模式下旧 uniqueId 的目录重命名为新 uniqueId
+        user_path = migrate_user_folders(
+            kwargs, "tiktok", local_uniqueId, current_uniqueId
+        )
+        user_path.mkdir(parents=True, exist_ok=True)
         return user_path
 
-    if local_user_data.get("uniqueId") != current_uniqueId:
-        # uniqueId不一致，触发目录更新操作
-        user_path = rename_user_folder(user_path, current_uniqueId)
-
-    return user_path
+    return create_user_folder(kwargs, current_uniqueId)

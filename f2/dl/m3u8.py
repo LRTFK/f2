@@ -12,6 +12,7 @@ from rich.progress import TaskID
 
 from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
+from f2.utils.core.run_report import record_failed_download
 from f2.utils.core.signal import SignalManager
 from f2.utils.http.utils import (
     get_chunk_size,
@@ -29,11 +30,28 @@ class M3U8DownloadMixin:
     semaphore: asyncio.Semaphore
     headers: dict
     proxies: dict
+    _verify: Union[bool, str]
     aclient: httpx.AsyncClient
     progress: Any
 
     @abstractmethod
     def _ensure_path(self, path: Union[str, Path]) -> Path: ...
+
+    # 2025/oct/08: 部分服务器（如抖音直播的 CDN）会拒绝带 Referer/Cookie 的 TS 片段请求，
+    # 因此片段请求默认去掉这两个头。各应用的下载器可覆盖此属性（设为空元组则保留全部请求头）。
+    SEGMENT_HEADERS_TO_DROP: tuple = ("referer", "cookie")
+
+    def _build_segment_request(self, ts_url: str) -> httpx.Request:
+        """
+        构建 TS 片段请求 (Build the request for a TS segment)
+
+        只从本次请求中去掉 SEGMENT_HEADERS_TO_DROP 里的请求头，
+        不修改共享 aclient 的默认请求头，避免影响复用该客户端的其它请求。
+        """
+        request = self.aclient.build_request("GET", ts_url, timeout=15.0)
+        for name in self.SEGMENT_HEADERS_TO_DROP:
+            request.headers.pop(name, None)
+        return request
 
     async def download_m3u8_stream(
         self,
@@ -107,6 +125,7 @@ class M3U8DownloadMixin:
                                     ts_url,
                                     self.headers,
                                     self.proxies,
+                                    verify=self._verify,
                                 )
                                 if ts_content_length == 0:
                                     ts_content_length = default_chunks
@@ -118,14 +137,7 @@ class M3U8DownloadMixin:
 
                                 ts_response = None
                                 try:
-                                    # 2025/oct/08: 删除aclient.headers的referer与cookie字段，避免部分服务器拒绝访问
-                                    self.aclient.headers.pop("referer", None)
-                                    self.aclient.headers.pop("cookie", None)
-                                    ts_request = self.aclient.build_request(
-                                        "GET",
-                                        ts_url,
-                                        timeout=15.0,
-                                    )
+                                    ts_request = self._build_segment_request(ts_url)
                                     ts_response = await self.aclient.send(
                                         ts_request,
                                         stream=True,
@@ -233,6 +245,7 @@ class M3U8DownloadMixin:
                 except Exception as e:
                     trace_logger.error(traceback.format_exc())
                     logger.error(_("m3u8文件解析失败：{0}").format(e))
+                    record_failed_download(str(full_path))
                     await self.progress.update(
                         task_id,
                         description=_("[red][  失败  ]：[/red]"),

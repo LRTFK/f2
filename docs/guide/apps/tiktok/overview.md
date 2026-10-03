@@ -42,11 +42,13 @@ outline: [2,3]
 | :---------------- | :-------------- | :------------------ | :--: |
 | 管理客户端配置     | `ClientConfManager`   |                  |  🟢  |
 | 生成真实msToken    | `TokenManager`     | `gen_real_msToken`   |  🟢  |
+| 获取缓存的真实msToken | `TokenManager`  | `cached_msToken`     |  🟢  |
 | 生成虚假msToken     | `TokenManager`     | `gen_false_msToken`  |  🟢  |
 | 生成ttwid          | `TokenManager`     | `gen_ttwid`          |  🟢  |
 | 生成odin_tt        | `TokenManager`      | `gen_odin_tt`        |  🟢  |
 | 使用接口地址生成Xb参数 | `XBogusManager`    | `str_2_endpoint`    |  🟢  |
 | 使用接口模型生成Xb参数 | `XBogusManager`    | `model_2_endpoint`   |  🟢  |
+| 使用接口模型生成新版签名参数 | `XGnarlyManager` | `model_2_endpoint` |  🟢  |
 | 提取单个用户id       | `SecUserIdFetcher` | `get_secuid`         |  🟢  |
 | 提取列表用户id       | `SecUserIdFetcher` | `get_all_secuid`     |  🟢  |
 | 提取单个用户唯一id    | `SecUserIdFetcher` | `get_uniqueid`        |  🟢  |
@@ -173,7 +175,7 @@ outline: [2,3]
 
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
-| secUid| str | 合集ID |
+| secUid| str | 用户ID |
 | cursor| int | 页码，初始为 `0` |
 | page_counts| int | 页数，初始为 `20` |
 
@@ -242,7 +244,8 @@ outline: [2,3]
 <<< @/snippets/tiktok/user-get-add.py{17-23}
 
 ::: tip :bulb: 提示
-此为 `cli` 模式的接口，开发者可自行定义创建用户目录的功能。
+- 此为 `cli` 模式的接口，开发者可自行定义创建用户目录的功能。
+- 用户修改用户名（`uniqueId`）后，会把各下载模式下旧用户名的目录一起重命名（见 `create_or_rename_user_folder`），全部改名后把数据库中的用户名更新为新用户名；有目录冲突或改名失败时保留旧用户名，下次运行继续处理。
 :::
 
 ### 创建作品下载记录 🟢
@@ -279,7 +282,7 @@ outline: [2,3]
 
 ### 生成真实msToken 🟢
 
-类方法，用于生成真实的 `msToken`，当出现错误时返回虚假的值。
+类方法，通过 mssdk 接口生成真实的 `msToken`，接口没有下发时抛出 `APIResponseError`。`msToken` 的长度随 SDK 版本变化（目前为 168 位），因此只检查是否下发。`F2` 自身的请求已不再调用它，而是读取 cookie 中的 `msToken`。
 
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -290,6 +293,20 @@ outline: [2,3]
 | msToken | str | 真实的msToken |
 
 <<< @/snippets/tiktok/token-manager.py#mstoken-real-sinppest{4}
+
+### 获取缓存的真实msToken 🟢
+
+类方法，返回进程内缓存的真实 `msToken`，首次调用时才联网生成。`F2` 自身的请求已不再调用它：`www.tiktok.com` 与 `webcast.tiktok.com` 的请求模型都不再携带 `msToken`，签名时从 cookie 中读取。
+
+| 参数 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| 无 | 无 | 无 |
+
+| 返回 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| msToken | str | 缓存的真实msToken |
+
+<<< @/snippets/tiktok/token-manager.py#mstoken-cached-sinppest{4}
 
 ### 生成虚假msToken 🟢
 
@@ -382,9 +399,33 @@ outline: [2,3]
 
 更加抽象的高级方法可以直接调用 `handler` 接口的 `fetch_user_profile`。
 
+### 使用接口模型生成新版签名参数 🟢
+
+类方法，为 `www.tiktok.com` 的接口生成网页 SDK 的签名参数，在业务参数之后依次追加 `X-Dynosaur`、`msToken`、`X-Bogus`（固定为 `1`）与 `X-Gnarly`。`webcast.tiktok.com` 的直播接口（检查开播状态、直播弹幕初始化）同样使用它，只用 `X-Bogus` 签名时直播弹幕初始化接口会返回空内容。
+
+| 参数 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| user_agent | str | 用户代理，必须与发送请求时的 `User-Agent` 一致 |
+| base_endpoint | str | 接口端点 |
+| params | dict | 请求参数 |
+| cookie | str | 用户 cookie，`msToken` 从中读取 |
+
+| 返回 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| final_endpoint | str | 带签名参数的完整地址 |
+
+<<< @/snippets/tiktok/xgnarly.py#model-2-endpoint-snippet{14-16}
+
+::: warning :warning: 注意
+- `msToken` 只取 cookie 中已有的值，没有时留空；伪造的 `msToken` 会让接口返回空内容。
+- 参数值按 RFC 3986 编码后签名，签名覆盖的就是这串字节，发送前不能再重新编码或调整参数顺序。
+- `www.tiktok.com` 与 `webcast.tiktok.com` 的接口会校验客户端的 TLS 与 HTTP/2 指纹，`httpx` 发出的请求即使签名正确也只会得到空内容。`TiktokCrawler` 会通过 `curl_cffi`（随 `F2` 一起安装）自动模拟 Chrome 发送这些请求，自行发送请求时也需要使用能模拟浏览器指纹的客户端。
+- 用户信息（`/api/user/detail/`）等接口需要登录后的 cookie，游客 cookie 只会得到空内容。
+:::
+
 ### 提取单个用户id 🟢
 
-类方法，用于提取单个用户id。
+类方法，用于提取单个用户id。支持 `https://www.tiktok.com/@用户名` 形式的主页链接；`https://www.tiktok.com/user/<sec_uid>` 形式的链接会直接从地址中取出 `sec_uid`，不发请求。
 
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -507,9 +548,9 @@ outline: [2,3]
 
 根据配置文件的全局格式化文件名。
 ::: details :page_facing_up: 格式化文件名规则
-- `Windows` 文件名长度限制为 `255` 个字符, 开启了长文件名支持后为 `32,767` 个字符。
-- `Unix` 文件名长度限制为 `255` 个字符。
-- 取去除后的 `20` 个字符, 加上后缀, 一般不会超过 `255` 个字符。
+- 文案（`desc`）超过 `200` 字节时截断中间部分，用 `......` 连接。
+- 下载时整个文件名连同后缀不超过 `255` 字节，超出时同样截断中间部分。这是 `ext4` 与多数 `NAS` 文件系统的上限，`NTFS`、`APFS` 按字符计算，不会超出。
+- `Windows` 下路径超过 `260` 个字符时自动改用扩展长度路径（`\\?\`），不需要开启系统的长路径支持。
 - 开发者可以根据自己的需求自定义 `custom_fields` 字段，实现自定义文件名。
 :::
 
@@ -535,7 +576,7 @@ outline: [2,3]
 ├── Download
 │   ├── tiktok
 │   │   ├── post
-│   │   │   ├── user_nickname
+│   │   │   ├── user_uniqueId
 │   │   │   │   ├── 2023-12-31_23-59-59_desc
 │   │   │   │   │   ├── 2023-12-31_23-59-59_desc-video.mp4
 │   │   │   │   │   ├── 2023-12-31_23-59-59_desc-desc.txt
@@ -549,7 +590,7 @@ outline: [2,3]
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | kwargs | dict | `cli` 配置文件 |
-| nickname | Union[str, int] | 用户昵称 |
+| uniqueId | Union[str, int] | 用户名（uniqueId） |
 
 | 返回 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -564,7 +605,7 @@ outline: [2,3]
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | old_path | Path | 旧的用户目录路径对象 |
-| new_nickname | str | 新的用户昵称 |
+| new_uniqueId | str | 新的用户名（uniqueId） |
 
 | 返回 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -578,20 +619,23 @@ outline: [2,3]
 
 ### 创建或重命名用户目录 🟢
 
-用于创建或重命名用户目录。为上面2个接口的组合。
+用于创建或重命名用户目录。TikTok 的用户目录按用户名（`uniqueId`）命名，本地记录中的用户名（`local_user_data["uniqueId"]`）与当前用户名不同时，把各下载模式下旧用户名的用户目录都重命名为当前用户名，已下载的文件随目录保留；没有本地记录或用户名没有变化时直接创建用户目录。
 
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | kwargs | dict | cli配置文件 |
 | local_user_data | dict | 本地用户数据 |
-| current_nickname | str | 当前用户昵称 |
+| current_uniqueId | str | 当前用户名（uniqueId） |
 
 | 返回 | 类型 | 说明 |
 | :--- | :--- | :--- |
 | user_path | Path | 用户目录路径对象 |
 
 ::: tip :bulb: 提示
-该接口很好的解决了用户改名之后重复重新下载的问题。集合在handler接口的`get_or_add_user_data`中，开发者无需关心直接调用handler的数据接口即可。
+- 目录按 `create_user_folder` 的规则计算（`path`、应用名、`mode`），会处理当前 `path` 下该应用的每个下载模式目录，返回当前下载模式的用户目录。
+- 某个模式下没有旧用户名的目录时跳过；新用户名的目录已存在时，该模式的两个目录都保持不变，不会覆盖或合并，并在日志中提示。
+- 重命名失败（例如目录中的文件正被其他程序占用）时在日志中提示；当前模式本次继续使用旧目录，下次运行再尝试。
+- 该接口集成在 `handler` 的 `get_or_add_user_data` 中，各模式的旧目录都改名后它会把数据库中的用户名更新为新用户名；只知道新用户名（单个作品、直播）时还会按 `secUid` 查找本地记录，开发者无需关心，直接调用 `handler` 的数据接口即可。
 :::
 
 ## crawler接口

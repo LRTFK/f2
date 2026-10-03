@@ -25,15 +25,50 @@ $ f2 -d WARNING dy -M post
 
 ![set-debug](/douyin/set-debug.png)
 
+::: tip :bulb: Tip
+`F2` redacts its logs automatically: `cookie`, `key`, `token` and password values from the configuration, as well as credentials inside proxy URLs, are masked (only a short prefix and the length remain) before a record reaches the console, log files or your own logging handlers. When using `F2` as a library and printing configuration yourself, run it through `from f2.log.redact import redact_config` first. The text of a configuration error (`ConfError`) names the offending setting and already masks the values of sensitive settings, so it is safe to print.
+:::
+
 ## Log Output to Console
+
+When `F2` is imported as a library, logs are only written to the console by default: no `logs` directory is created in the current directory and no old log files are cleaned up. To also write log files, call `log_setup` with a `log_path` (defaults to `./logs`; pass `None` to disable file logging). The `CLI` performs this setup automatically on startup.
+
+By default the `CLI` writes logs to a `logs` directory in the current directory. In environments without write permission, put `--no-log-file` before the app name: logs then go to the console only, and no `logs` directory is created or cleaned up:
+
+```bash
+f2 --no-log-file dy -M one -u <post URL>
+```
 
 <<< @/snippets/set-debug.py#log-2-console-snippet{6}
 
 ![log-2-console](/douyin/log-2-console.png)
 
 ::: tip :bulb: Tip
-If you want more detailed logs in the console, you can use the `DEBUG` level. You must then use the `logger` object to output logs, otherwise, they won't be shown in the console.
+If you want more detailed logs in the console, you can use the `DEBUG` level. `log_setup` only takes effect once per process; later calls simply return the already configured `logger`. Exception tracebacks go to the separate `f2-trace` logger; as a library user you can enable its file output with `log_setup(log_to_console=False, log_name="f2-trace", lazy_file_creation=True)`.
 :::
+
+## Exceptions and Exit Codes
+
+Every exception raised by `F2` inherits from `f2.exceptions.F2Error`, with four families below it: `APIError`, `ConfError`, `DatabaseError` and `FileError`. When using `F2` as a library, catching the root class is enough:
+
+```python
+from f2.exceptions import F2Error
+
+try:
+    await handler.fetch_user_post(...)
+except F2Error as e:
+    print("F2 failed:", e)
+```
+
+When an API request fails, for example because of an HTTP error status, exhausted retries, a network error or a response that is not JSON, `crawler` and `handler` methods raise the matching `APIError` subclass. Its `status_code` attribute holds the real HTTP status code. They no longer return empty data, so "no posts" and "request failed" can be told apart. Exceptions no longer log anything when they are created; callers decide whether to log them.
+
+`CLI` exit codes:
+
+| Exit code | Meaning |
+| :--- | :--- |
+| `0` | Everything completed |
+| `1` | Aborted by an `F2Error` (a single error line plus the FAQ link is printed and the full traceback goes to the `f2-trace` log; errors raised while preparing the run, such as reading the configuration, are reported the same way), or at least one file still failed after all of its links were tried; the failed files are listed at the end |
+| `2` | Invalid command line usage, reported by `click` |
 
 ## WSS Configuration <Badge type="warning" text="Experimental" />
 
@@ -67,6 +102,6 @@ tiktok:
 :::
 
 > [!IMPORTANT] Important ❗❗❗
-> The current version does not support enabling `SSL` certificate verification, so the `verify` parameter must always be set to `false`.
+> The `verify` under the `wss` section configures the certificate of the local danmaku forwarding service; the current version does not support enabling it, so keep it `false`. It is unrelated to the top-level `verify` in `conf.yaml`, which controls certificate verification for `HTTP` requests (enabled by default).
 > The default timeout for both local and remote connections is `10` seconds.
-> If the local connection does not connect to `WSS` within the timeout, `F2` will automatically disconnect to save resources.
+> If the local connection does not connect to `WSS` within the timeout, `F2` will automatically disconnect to save resources. The log then says that no client is connected to the local `WebSocket` server and receiving danmaku has stopped; it does not mean the stream has ended.

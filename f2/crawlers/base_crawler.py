@@ -1,9 +1,9 @@
 # path: f2/crawlers/base_crawler.py
 
 import asyncio
+import functools
 import json
-import traceback
-from typing import Optional
+from typing import Optional, Union
 
 import httpx
 from httpx import Response
@@ -21,7 +21,13 @@ from f2.exceptions.api_exceptions import (
 )
 from f2.exceptions.conf_exceptions import InvalidEncodingError
 from f2.i18n.translator import _
-from f2.log.logger import logger, trace_logger
+from f2.log.logger import logger
+
+
+@functools.lru_cache(maxsize=None)
+def _warn_insecure_once() -> None:
+    """关闭 TLS 证书校验时只提示一次 (Warn only once when TLS verification is disabled)"""
+    logger.warning(_("已关闭 TLS 证书校验，请仅在受信任的调试代理环境中使用"))
 
 
 class BaseCrawler:
@@ -41,6 +47,7 @@ class BaseCrawler:
     - limits (httpx.Limits): 用于限制最大连接数的配置。
     - _max_retries (int): 请求重试次数。
     - _timeout (int): 请求超时时间。
+    - _verify (bool | str): TLS 证书校验，True / False / CA 证书路径，默认 True。
     - timeout (httpx.Timeout): 超时设置。
     - _aclient (httpx.AsyncClient): 异步 HTTP 客户端。
     - _client (httpx.Client): 同步 HTTP 客户端。
@@ -109,6 +116,12 @@ class BaseCrawler:
             pool=self._timeout * 3,  # 连接池超时设置更长
         )
 
+        # TLS 证书校验 / TLS certificate verification
+        # True（默认）/ False / CA 证书文件路径；作为库使用时通过 kwargs["verify"] 传入
+        self._verify: Union[bool, str] = kwargs.get("verify", True)
+        if self._verify is False:
+            _warn_insecure_once()
+
         # 异步客户端 / Asynchronous client
         self._aclient: Optional[httpx.AsyncClient] = None
 
@@ -161,7 +174,7 @@ class BaseCrawler:
             )
             return {
                 "all://": transport_class(
-                    verify=False,
+                    verify=self._verify,
                     limits=self.limits,
                     retries=self._max_retries,
                 ),
@@ -169,11 +182,12 @@ class BaseCrawler:
 
         # 根据代理类型选择传输方式
         if proxy_url.startswith(("socks4://", "socks5://")):
-            # SOCKS代理使用专门的传输类
+            # SOCKS代理使用专门的传输类（显式标注联合类型，兼容 httpx-socks 0.13 起的精确返回类型）
+            transport: Union[httpx.AsyncBaseTransport, httpx.BaseTransport]
             if async_mode:
-                transport = AsyncProxyTransport.from_url(proxy_url, verify=False)
+                transport = AsyncProxyTransport.from_url(proxy_url, verify=self._verify)
             else:
-                transport = SyncProxyTransport.from_url(proxy_url, verify=False)
+                transport = SyncProxyTransport.from_url(proxy_url, verify=self._verify)
 
             return {
                 "all://": transport,
@@ -185,7 +199,7 @@ class BaseCrawler:
             )
             return {
                 "all://": transport_class(
-                    verify=False,
+                    verify=self._verify,
                     limits=self.limits,
                     proxy=httpx.Proxy(url=proxy_url),
                     local_address="0.0.0.0",
@@ -228,12 +242,11 @@ class BaseCrawler:
 
         Returns:
             Response: 原始响应对象 (Raw response object)
+
+        Raises:
+            APIError: 请求失败时抛出对应的接口异常 (Raised when the request fails)
         """
-        try:
-            return await self.get_fetch_data(endpoint)
-        except Exception as exc:
-            trace_logger.error(traceback.format_exc())
-            return Response(status_code=500)
+        return await self.get_fetch_data(endpoint)
 
     async def _fetch_get_json(self, endpoint: str) -> dict:
         """
@@ -244,13 +257,13 @@ class BaseCrawler:
 
         Returns:
             dict: 解析后的JSON数据 (Parsed JSON data)
+
+        Raises:
+            APIError: 请求失败或响应不是有效 JSON 时抛出对应的接口异常，
+                不再返回空字典，调用方可据此区分"没有数据"与"请求失败"
         """
-        try:
-            response = await self.get_fetch_data(endpoint)
-            return self.parse_json(response)
-        except Exception as exc:
-            trace_logger.error(traceback.format_exc())
-            return {}
+        response = await self.get_fetch_data(endpoint)
+        return self.parse_json(response)
 
     async def _fetch_post_json(self, endpoint: str, **kwargs) -> dict:
         """
@@ -262,13 +275,12 @@ class BaseCrawler:
 
         Returns:
             dict: 解析后的 JSON 数据 (Parsed JSON data)
+
+        Raises:
+            APIError: 请求失败或响应不是有效 JSON 时抛出对应的接口异常
         """
-        try:
-            response = await self.post_fetch_data(endpoint, **kwargs)
-            return self.parse_json(response)
-        except Exception as e:
-            trace_logger.error(traceback.format_exc())
-            return {}
+        response = await self.post_fetch_data(endpoint, **kwargs)
+        return self.parse_json(response)
 
     def parse_json(self, response: Response) -> dict:
         """
@@ -279,31 +291,31 @@ class BaseCrawler:
 
         Returns:
             dict: 解析后的JSON数据 (Parsed JSON data)
-        """
-        if (
-            response is not None
-            and isinstance(response, Response)
-            and response.status_code == 200
-        ):
-            try:
-                return response.json()
-            except json.JSONDecodeError as e:
-                logger.error(
-                    _("解析 {0} 接口 JSON 失败：{1}").format(str(response.url), e)
-                )
-            except UnicodeDecodeError as e:
-                logger.error(
-                    _("接口 {0} JSON 解码错误：{1}").format(str(response.url), e)
-                )
-        else:
-            if isinstance(response, Response):
-                logger.error(
-                    _("获取数据失败。状态码: {0}").format(response.status_code)
-                )
-            else:
-                logger.error(_("无效的Json响应"))
 
-        return {}
+        Raises:
+            APIResponseError: 响应无效、状态码不是 200 或内容不是有效 JSON
+        """
+        if not isinstance(response, Response):
+            raise APIResponseError(_("无效的Json响应"))
+
+        if response.status_code != 200:
+            raise APIResponseError(
+                _("获取数据失败。状态码: {0}").format(response.status_code),
+                status_code=response.status_code,
+            )
+
+        try:
+            return response.json()
+        except json.JSONDecodeError as e:
+            raise APIResponseError(
+                _("解析 {0} 接口 JSON 失败：{1}").format(str(response.url), e),
+                status_code=response.status_code,
+            ) from e
+        except UnicodeDecodeError as e:
+            raise APIResponseError(
+                _("接口 {0} JSON 解码错误：{1}").format(str(response.url), e),
+                status_code=response.status_code,
+            ) from e
 
     async def get_fetch_data(self, url: str) -> Response:
         """
@@ -537,8 +549,9 @@ class BaseCrawler:
         response = getattr(http_error, "response", None)
         status_code = getattr(response, "status_code", None)
 
+        # 异常信息由 CLI 统一输出一次，这里只在调试日志中记录请求地址与尝试次数
         if response is None or status_code is None:
-            logger.error(
+            logger.debug(
                 _("HTTP状态错误：{0}, URL：{1}, 尝试次数：{2}").format(
                     http_error, url, attempt
                 )
@@ -561,7 +574,9 @@ class BaseCrawler:
         # 根据状态码抛出对应的异常
         if status_code in status_code_exception_map:
             exception_class = status_code_exception_map[status_code]
-            raise exception_class(_("HTTP状态码错误：{0}").format(status_code))
+            raise exception_class(
+                _("HTTP状态码错误：{0}").format(status_code), status_code=status_code
+            )
 
         # 特殊处理状态码 302
         if status_code == 302:
@@ -571,12 +586,14 @@ class BaseCrawler:
             return
 
         # 未知状态码的处理
-        logger.error(
+        logger.debug(
             _("未知HTTP状态码：{0}, URL：{1}, 尝试次数：{2}").format(
                 status_code, url, attempt
             )
         )
-        raise APIResponseError(_("未知HTTP状态码错误：{0}").format(status_code))
+        raise APIResponseError(
+            _("未知HTTP状态码错误：{0}").format(status_code), status_code=status_code
+        )
 
     async def close(self):
         # 如果没有初始化客户端，则不关闭 (If the client is not initialized, do not close)

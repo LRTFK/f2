@@ -10,6 +10,7 @@ from httpx_socks import SyncProxyTransport
 
 from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
+from f2.log.redact import redact_text
 
 
 class ProxyType(Enum):
@@ -58,6 +59,7 @@ def check_proxy_avail(
     expected_content: Optional[str] = None,
     timeout: int = 10,
     method: str = "GET",
+    verify: Union[bool, str] = True,
     **kwargs,
 ) -> bool:
     """
@@ -72,6 +74,7 @@ def check_proxy_avail(
         expected_content: 预期的内容关键字，用于验证页面加载正确
         timeout: 请求超时时间，默认 10 秒 (增加到10秒，因为代理可能较慢)
         method: 请求方法，如 "GET", "POST", "PUT", "DELETE", "OPTIONS"
+        verify: TLS 证书校验，True / False / CA 证书路径，默认为 True
         **kwargs: 其他请求参数，如 data, json, headers 等
 
     Returns:
@@ -103,15 +106,15 @@ def check_proxy_avail(
 
     try:
         logger.info(_("正在测试代理服务器是否可用🚀"))
-        logger.debug(_("代理URL：{0}").format(proxy_url))
+        logger.debug(_("代理URL：{0}").format(redact_text(proxy_url)))
 
         # 根据代理类型选择合适的传输方式
         if proxy_url.startswith(("socks4://", "socks5://")):
-            transport = SyncProxyTransport.from_url(proxy_url)
-            client = httpx.Client(transport=transport, timeout=timeout, verify=False)
+            transport = SyncProxyTransport.from_url(proxy_url, verify=verify)
+            client = httpx.Client(transport=transport, timeout=timeout)
         else:
             # HTTP/HTTPS代理 - 使用 mounts 挂载代理传输
-            proxy_transport = httpx.HTTPTransport(proxy=proxy_url)
+            proxy_transport = httpx.HTTPTransport(proxy=proxy_url, verify=verify)
             mounts = {
                 "http://": proxy_transport,
                 "https://": proxy_transport,
@@ -119,7 +122,7 @@ def check_proxy_avail(
             client = httpx.Client(
                 timeout=timeout,
                 mounts=mounts,
-                verify=False,
+                verify=verify,
             )
 
         with client:

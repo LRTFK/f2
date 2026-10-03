@@ -12,7 +12,8 @@ from f2.apps.douyin.utils import ClientConfManager
 from f2.cli.cli_commands import set_cli_config
 from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
-from f2.utils.config.conf_manager import ConfigManager
+from f2.log.redact import redact_config
+from f2.utils.config.conf_manager import ConfigManager, get_f2_setting
 from f2.utils.config.merge import merge_config
 from f2.utils.core.adapters import adapt_validation_call
 from f2.utils.file.path import get_resource_path
@@ -81,13 +82,18 @@ def handler_auto_cookie(
         logger.error(
             _("请结束所有浏览器相关的进程，并确保你有管理员的权限访问浏览器后重试！")
         )
-        ctx.abort()
+        ctx.exit(1)
+    except click.Abort:
+        # 确认更新配置时被取消，交给 click 输出 Aborted! 并以退出码 1 结束
+        raise
     except Exception as e:
         trace_logger.error(traceback.format_exc())
         logger.error(_("自动获取Cookie失败：{0}").format(str(e)))
-        ctx.abort()
-    finally:
-        ctx.exit(0)
+        ctx.exit(1)
+
+    # 获取成功后只更新配置文件，不继续下载；
+    # 此前 ctx.exit(0) 写在 finally 中，会覆盖失败时的退出码
+    ctx.exit(0)
 
 
 def handler_naming(
@@ -155,7 +161,7 @@ def validate_proxies(
             )
 
         # 验证代理地址格式
-        if not ":" in proxy_address:
+        if ":" not in proxy_address:
             raise click.BadParameter(_("代理地址格式错误，正确格式为: host:port"))
 
         # 构建代理URL
@@ -164,6 +170,9 @@ def validate_proxies(
         # 校验代理服务器是否可用
         if not check_proxy_avail(
             proxy_url,
+            verify=(
+                False if ctx.params.get("insecure") else get_f2_setting("verify", True)
+            ),
             # test_url="https://www.douyin.com/",
         ):
             raise click.BadParameter(_("代理服务器不可用"))
@@ -347,6 +356,12 @@ def validate_proxies(
     callback=handler_auto_cookie,
 )
 @click.option(
+    "--insecure",
+    is_flag=True,
+    is_eager=True,
+    help=_("关闭 TLS 证书校验，仅建议在受信任的调试代理环境中使用"),
+)
+@click.option(
     "-h",
     is_flag=True,
     is_eager=True,
@@ -379,13 +394,22 @@ def douyin(
     # 读取低频主配置文件
     main_manager = ConfigManager(f2.APP_CONFIG_FILE_PATH)
     main_conf_path = get_resource_path(f2.APP_CONFIG_FILE_PATH)
-    main_conf = main_manager.get_config("douyin")
+    main_conf = main_manager.get_app_config("douyin")
 
     # 更新主配置文件中的代理参数
     main_conf["proxies"] = ClientConfManager.proxies()
 
-    # 更新主配置文件中的headers参数
+    # 更新主配置文件中的 TLS 证书校验参数
+    main_conf["verify"] = get_f2_setting("verify", True)
+
+    # --insecure 等价于 verify: false，不以 insecure 键写入配置文件
+    if kwargs.pop("insecure", False):
+        kwargs["verify"] = False
+
+    # 更新主配置文件中的headers参数：conf.yaml 中 douyin.headers 的全部请求头都会生效，
+    # 例如需要手动覆盖的 x-tt-argus / uifid
     kwargs.setdefault("headers", {})
+    kwargs["headers"].update(ClientConfManager.headers())
     kwargs["headers"]["User-Agent"] = ClientConfManager.user_agent()
     kwargs["headers"]["Referer"] = ClientConfManager.referer()
 
@@ -408,12 +432,13 @@ def douyin(
         custom_manager = main_manager
         config = str(main_conf_path)
 
-    custom_conf = custom_manager.get_config("douyin")
-
     if update_config:  # 如果指定了 update_config，更新配置文件
         update_manger = ConfigManager(config)
         update_manger.update_config_with_args("douyin", **kwargs)
         return
+
+    # 缺少该应用的配置或格式不对时报错；更新配置时允许文件里还没有这一段
+    custom_conf = custom_manager.get_app_config("douyin")
 
     # 检查 kwargs["proxies"] 的类型
     if kwargs.get("proxies"):
@@ -464,7 +489,7 @@ def douyin(
             logger.debug(_("检测到代理配置，正在验证代理可用性..."))
 
             # 构建代理配置进行测试
-            if not check_proxy_avail(proxy_config):
+            if not check_proxy_avail(proxy_config, verify=kwargs.get("verify", True)):
                 logger.error(_("代理服务器不可用，请检查代理配置"))
                 # 可以选择是否继续执行或退出
                 # ctx.abort()  # 如果要在代理失败时退出
@@ -474,9 +499,9 @@ def douyin(
     logger.info(_("模式：{0}").format(kwargs.get("mode")))
     logger.info(_("主配置路径：{0}").format(main_conf_path))
     logger.info(_("自定义配置路径：{0}").format(Path.cwd() / config))
-    logger.debug(_("主配置参数：{0}").format(main_conf))
-    logger.debug(_("自定义配置参数：{0}").format(custom_conf))
-    logger.debug(_("CLI参数：{0}").format(kwargs))
+    logger.debug(_("主配置参数：{0}").format(redact_config(main_conf)))
+    logger.debug(_("自定义配置参数：{0}").format(redact_config(custom_conf)))
+    logger.debug(_("CLI参数：{0}").format(redact_config(kwargs)))
 
     # 尝试从命令行参数或kwargs中获取url和mode
     missing_params = [param for param in ["url", "mode"] if not kwargs.get(param)]

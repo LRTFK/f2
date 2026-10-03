@@ -11,20 +11,26 @@ from f2.apps.tiktok.db import AsyncUserDB
 from f2.apps.tiktok.utils import format_file_name
 from f2.cli.cli_console import RichConsoleManager
 from f2.dl.base_downloader import BaseDownloader
+from f2.exceptions.conf_exceptions import ConfError
 from f2.i18n.translator import _
 from f2.log.logger import logger
 from f2.utils.time.filter import filter_by_date_interval
-from f2.utils.time.timestamp import get_timestamp, timestamp_2_str
+from f2.utils.time.timestamp import get_timestamp, parse_interval, timestamp_2_str
 
 
 class TiktokDownloader(BaseDownloader):
     def __init__(self, kwargs: dict = {}):
-        if kwargs["cookie"] is None:
-            raise ValueError(
+        # 只检查是否提供了 cookie：空字符串允许通过，抖音直播等请求不需要用户的 cookie
+        if kwargs.get("cookie") is None:
+            raise ConfError(
                 _(
                     "cookie不能为空。请提供有效的 cookie 参数，或自动从浏览器获取。如 `--auto-cookie edge`"
-                )
+                ),
+                key="cookie",
             )
+
+        # 日期区间格式错误时在请求前报错，否则各模式会翻完所有页面，却因筛选失败一个都不下载
+        parse_interval(kwargs.get("interval"))
 
         super().__init__(kwargs)
 

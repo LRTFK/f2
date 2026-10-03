@@ -1,14 +1,16 @@
 # path: f2/exceptions/api_exceptions.py
 
-from f2.i18n.translator import _
-from f2.log.logger import logger
+from f2.exceptions.base import F2Error
 
 
-class APIError(Exception):
-    """基本API异常类，其他API异常都会继承这个类"""
+class APIError(F2Error):
+    """
+    基本API异常类，其他API异常都会继承这个类
+
+    异常在构造时不记录日志：CLI 中止运行时统一输出一次，作为库使用时由调用方决定是否记录。
+    """
 
     def __init__(self, message=None, status_code=None):
-        logger.error(_("请前往QA文档 https://f2.wiki/faq 查看相关帮助"))
         self.status_code = status_code
         super().__init__(message)
 

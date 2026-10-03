@@ -38,18 +38,34 @@ def help() -> None:
             ),
         ),
         ("-k --cookie", "[dark_cyan]str", _("登录后的cookie")),
+        (
+            "-i --interval",
+            "[dark_cyan]str",
+            _(
+                "下载日期区间内发布的微博，格式：YYYY-MM-DD|YYYY-MM-DD，'all' 为下载所有微博"
+            ),
+        ),
         ("-e --timeout", "[dark_cyan]int", _("网络请求超时时间，默认为 10")),
-        ("-r --max-retries", "[dark_cyan]int", _("网络请求超时重试数，默认为 5")),
+        ("-r --max_retries", "[dark_cyan]int", _("网络请求超时重试数，默认为 5")),
         ("-x --max-connections", "[dark_cyan]int", _("网络请求并发连接数，默认为 5")),
         ("-t --max-tasks", "[dark_cyan]int", _("异步的任务数，默认为 10")),
         ("-o --max-counts", "[dark_cyan]int", _("最大微博下载数 默认为 0，表示无限制")),
-        ("-s --page-counts", "[dark_cyan]int", _("每页微博数，默认为 20个微博/页")),
+        (
+            "-s --page-counts",
+            "[dark_cyan]int",
+            _("微博接口每页固定返回约 20 条微博，此参数不生效"),
+        ),
         (
             "-P --proxies",
             "[dark_cyan]str",
             _(
                 "配置代理服务器，支持多种代理类型。格式：类型 地址，例如：socks5 127.0.0.1:1080 或 http proxy.example.com:8080。支持的类型：http, https, socks4, socks5"
             ),
+        ),
+        (
+            "--insecure",
+            "[dark_cyan]Flag",
+            _("关闭 TLS 证书校验，仅建议在受信任的调试代理环境中使用"),
         ),
         ("--update-config", "[dark_cyan]Flag", _("使用命令行选项更新配置文件")),
         ("--init-config", "[dark_cyan]Flag", _("初始化配置文件")),

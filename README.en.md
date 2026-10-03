@@ -4,7 +4,7 @@
 
 [![Downloads](https://pepy.tech/badge/f2/month)](https://pepy.tech/project/f2)
 [![PyPI version](https://badge.fury.io/py/f2.svg)](https://badge.fury.io/py/f2)
-[![Dev Branch](https://badgen.net/badge/branch/v0.0.1.7-pw2/blue)](https://github.com/Johnserf-Seed/f2/tree/v0.0.1.7-pw2)
+[![Dev Branch](https://badgen.net/badge/branch/v0.0.1.8-pw3/blue)](https://github.com/Johnserf-Seed/f2/tree/v0.0.1.8-pw3)
 [![Discord](https://img.shields.io/discord/1146473603450282004?label=Discord)](https://discord.gg/3PhtPmgHf8)
 [![codecov](https://codecov.io/gh/Johnserf-Seed/f2/graph/badge.svg?token=T9DH4QPZSS)](https://codecov.io/gh/Johnserf-Seed/f2)
 [![TikHub](https://img.shields.io/badge/%E8%B5%9E%E5%8A%A9%E5%95%86-TikHub-orange?style=flat-square&logo=tiktok)](https://beta-web.tikhub.io/users/signup?referral_code=6hLcGD94)
@@ -12,6 +12,8 @@
 
 
 [🇨🇳 简体中文 readme](https://github.com/Johnserf-Seed/f2/blob/main/README.md) • [🇬🇧 English readme](https://github.com/Johnserf-Seed/f2/blob/main/README.en.md)
+
+> The repository shows the development branch by default (currently `v0.0.1.8-pw3`), which may contain changes that are not yet released on PyPI. For the released version, refer to the documentation at [f2.wiki](https://f2.wiki).
 
 `F2` is a [`Python` library](https://pypi.org/project/f2/) that provides multi-platform content downloading and API data processing. It supports platforms like `DouYin`、`TikTok`、`Twitter`、`WeiBo`, and is easily adaptable to more platforms.
 
@@ -182,6 +184,7 @@ For the complete list of features, please refer to the [API Documentation](https
   |---|---|---|---|
   |Manage Client Configuration|`ClientConfManager`|-|🟢|
   |Generate Random Numeric Bytes|-|`generate_numeric_bytes`|🟢|
+  |Generate Random Alphanumeric Bytes|-|`generate_alphanumeric_bytes`|🟢|
 </details>
 
 <details>
@@ -1029,7 +1032,7 @@ For the complete list of features, please refer to the [API Documentation](https
 - Project address: https://github.com/TikHubIO/
 ## 👨‍💻 Contribute
 
-If you're interested in contributing code to `F2`, please refer to the [contributing guide](https://github.com/Johnserf-Seed/f2/blob/main/CONTRIBUTING.md).
+If you're interested in contributing code to `F2`, please refer to the [contributing guide](https://github.com/Johnserf-Seed/f2/blob/v0.0.1.8-pw3/CONTRIBUTING.en.md). Please open `PR`s against the current development branch `v0.0.1.8-pw3` (see the `Dev Branch` badge at the top), not `main`.
 
 ## 🙏 Acknowledgements
 
@@ -1041,6 +1044,7 @@ If you're interested in contributing code to `F2`, please refer to the [contribu
 - [click](https://github.com/pallets/click)
 - [rich](https://github.com/Textualize/rich)
 - [httpx](https://github.com/encode/httpx)
+- [curl_cffi](https://github.com/lexiforest/curl_cffi)
 - [aiofiles](https://github.com/Tinche/aiofiles)
 - [aiosqlite](https://github.com/omnilib/aiosqlite)
 - [jsonpath-ng](https://github.com/h2non/jsonpath-ng)

@@ -13,13 +13,15 @@ outline: deep
 | `-M`   | `--mode` | `ENUM` | Download mode |
 | `-n`   | `--naming` | `TEXT` | Global file naming format for posts |
 | `-k`   | `--cookie` | `TEXT` | Logged-in session cookie |
+| `-i`   | `--interval` | `TEXT` | Download date range |
 | `-e`   | `--timeout` | `INTEGER` | Network request timeout duration |
 | `-r`   | `--max_retries` | `INTEGER` | Number of retries for timed-out network requests |
 | `-x`   | `--max-connections` | `INTEGER` | Number of concurrent network connections |
 | `-t`   | `--max-tasks` | `INTEGER` | Number of asynchronous tasks |
 | `-o`   | `--max-counts` | `INTEGER` | Maximum number of posts to download |
-| `-s`   | `--page-counts` | `INTEGER` | Number of posts fetched per page |
+| `-s`   | `--page-counts` | `INTEGER` | Posts per page (no effect for Weibo) |
 | `-P`   | `--proxies` | `TEXT...` | Proxy servers |
+|        | `--insecure` | `FLAG` | Disable TLS certificate verification |
 |        | `--update-config` | `BOOLEAN` | Update configuration file |
 |        | `--init-config` | `TEXT` | Initialize configuration file |
 |        | `--auto-cookie` | `ENUM` | Automatically retrieve the cookie |
@@ -32,6 +34,8 @@ outline: deep
 
 Path to the configuration file, lowest priority. The default configuration file path is `f2/conf/app.yaml`. Supports both **absolute** and **relative** paths.
 
+If the file cannot be parsed, `F2` reports the line and column of the error; it also stops with an error if the top level is not a key-value mapping or the file has no settings for this app, exiting with code `1`. When the app's settings are missing, use `--init-config` to add the default settings to the file.
+
 ### `--url`
 
 Provide the corresponding link based on the selected mode.
@@ -39,6 +43,10 @@ Provide the corresponding link based on the selected mode.
 ### `--path`
 
 Save location for posts. The default is `Download` in the current directory. Supports **absolute** and **relative** paths.
+
+::: tip :bulb: Tip
+Posts are saved in `<path>/weibo/<mode>/<user nickname>`. When a user changes their nickname, the next download of that user (in any mode) renames the folders of the old nickname in every download mode to the new one, so the downloaded posts stay with them and posts whose file names have not changed are not downloaded again; later changes are followed as well. If a folder with the new nickname already exists in a mode, both folders of that mode are left as they are and a message is logged until you merge them and delete the old folder.
+:::
 
 ### `--folderize`
 
@@ -63,6 +71,7 @@ Supported separators: `_`, `-`.
 
 ::: tip :bulb: Tip
 - `custom_fields` allows developers to define custom field mappings. See: [Global File Name Formatting 🟢](/guide/apps/weibo/overview#global-file-name-formatting-🟢).
+- In file names, captions and nicknames keep punctuation, spaces and all scripts as they are; only characters that file systems do not allow (`\ / : * ? " < > |`) are replaced with similar full-width characters (for example `?` becomes `？`), and newlines and other control characters are turned into spaces or removed. Captions longer than 200 bytes are shortened in the middle, and so is any file name that would exceed 255 bytes with its suffix, so files can also be saved to a NAS or other file systems that limit names by bytes. On Windows, paths longer than 260 characters automatically use the long path form, so no system setting needs to be changed.
 :::
 
 ### `--cookie`
@@ -83,6 +92,17 @@ Logged-in session `Cookie`. Most APIs require login, so a valid `Cookie` must be
 - Never share your `Cookie` in `Discussions`, `Issues`, `Discord`, or any public forum.
 - Anyone with your `Cookie` can log into your account.
 - If leaked, log out immediately and sign back in to invalidate it.
+:::
+
+### `--interval`
+
+Download weibos published within a date range, in the format `Year-Month-Day|Year-Month-Day`. Both days are included, and dates are in Beijing time (UTC+8). For example: `2024-01-01|2024-06-30`; set `all` to download all weibos. Only applies to `post` mode.
+
+::: tip :bulb: Tip
+- The Weibo profile API cannot query by date, so `F2` pages from the newest weibo, downloads only those within the range, and stops once it reaches weibos published before the start date. The earlier the range, the more pages it has to go through.
+- Pinned weibos are not in chronological order. They are still downloaded when they fall within the range, and they do not affect when paging stops.
+- An invalid date format, or an end date earlier than the start date, is reported as an error before any request is made.
+- When `--max-counts` is also set, it counts the weibos left after date filtering.
 :::
 
 ### `--timeout`
@@ -107,7 +127,7 @@ Maximum number of posts to download. Set to `None` or `0` for unlimited. Default
 
 ### `--page-counts`
 
-Number of posts fetched per API request. It is not recommended to exceed `20`. Default is `20`.
+The Weibo profile API cannot set the page size and always returns about `20` posts per page, so this option has no effect for Weibo; it is kept only to match the configuration of other apps. Use `--max-counts` to limit how many posts are downloaded.
 
 ### `--proxies`
 
@@ -117,6 +137,14 @@ Example: `--proxies http://x.x.x.x https://x.x.x.x`。
 
 > [!IMPORTANT] IMPORTANT ❗❗❗
 > **If the proxy does not support egress HTTPS, use: `--proxies http://x.x.x.x http://x.x.x.x`.**
+
+### `--insecure`
+
+Disable `TLS` certificate verification. Use it only behind a trusted debugging proxy. The flag affects the current run only and is not written to the configuration file; set `verify: false` in `conf.yaml` to disable it permanently. See [TLS certificate verification](/en/site-config#tls-certificate-verification).
+
+```bash
+f2 wb --insecure --proxies http 127.0.0.1:8888 ...
+```
 
 ### `--update-config`
 
@@ -139,6 +167,10 @@ Automatically obtain `cookie` from the browser. Please make sure to close the se
 - `brave`
 - `vivaldi`
 - `librewolf`
+
+On success, the cookie is written to the configuration file (the custom file given with `-c`, if any) and `F2` exits without downloading; on failure, it prints the reason and exits with code `1`.
+
+Cookies from the latest Chrome and Edge on Windows cannot be read automatically for now; see the [FAQ](/en/faq#auto-cookie-failed-unable-to-get-key-for-cookie-decryption) for workarounds.
 
 Not supported to switch browser user settings.
 

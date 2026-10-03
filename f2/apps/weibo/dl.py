@@ -11,6 +11,7 @@ from f2.apps.weibo.api import WeiboAPIEndpoints
 from f2.apps.weibo.utils import format_file_name
 from f2.cli.cli_console import RichConsoleManager
 from f2.dl.base_downloader import BaseDownloader
+from f2.exceptions.conf_exceptions import ConfError
 from f2.i18n.translator import _
 from f2.log.logger import logger
 from f2.utils.time.filter import filter_by_date_interval
@@ -19,11 +20,13 @@ from f2.utils.time.filter import filter_by_date_interval
 class WeiboDownloader(BaseDownloader):
     def __init__(self, kwargs: Optional[dict] = None) -> None:
         kwargs = kwargs or {}
-        if kwargs["cookie"] is None:
-            raise ValueError(
+        # 只检查是否提供了 cookie：空字符串允许通过，抖音直播等请求不需要用户的 cookie
+        if kwargs.get("cookie") is None:
+            raise ConfError(
                 _(
-                    "cookie不能为空。请提供有效的 cookie 参数，或自动从浏览器获取 `--auto-cookie edge`"
-                )
+                    "cookie不能为空。请提供有效的 cookie 参数，或自动从浏览器获取。如 `--auto-cookie edge`"
+                ),
+                key="cookie",
             )
 
         super().__init__(kwargs)
@@ -130,11 +133,11 @@ class WeiboDownloader(BaseDownloader):
             logger.debug(_("开始下载微博：{0}").format(self.weibo_id))
             await self.download_desc()
 
-        # 检查微博是否有图片
+        # 检查微博是否有图片；视频的 page_info.type 既可能是整数 11，也可能是字符串 "11"（#249）
         if (
             self.weibo_data_dict.get("weibo_pic_num") == 0
             and weibo_data_dict.get("weibo_pic_ids") is None
-            and weibo_data_dict.get("is_video") == "11"
+            and str(weibo_data_dict.get("is_video")) == "11"
         ):
             await self.download_video()
         else:

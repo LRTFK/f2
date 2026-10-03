@@ -1,9 +1,9 @@
 # path: f2/apps/douyin/models.py
 
 from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from f2.apps.douyin.utils import ClientConfManager, TokenManager, VerifyFpManager
 
@@ -36,7 +36,8 @@ class BaseRequestModel(BaseModel):
     downlink: int = 10
     effective_type: str = "4g"
     round_trip_time: int = 100
-    msToken: str = TokenManager.gen_real_msToken()
+    # 首次实例化时才联网获取（进程内缓存），导入模块不再联网
+    msToken: str = Field(default_factory=TokenManager.cached_msToken)
 
 
 class BaseLiveModel(BaseModel):
@@ -102,7 +103,8 @@ class LiveChatSend(BaseLiveModel):
     content: str
     type: int = 0
     rtf_content: str = ""
-    msToken: str = TokenManager.gen_real_msToken()
+    # 首次实例化时才联网获取（进程内缓存），导入模块不再联网
+    msToken: str = Field(default_factory=TokenManager.cached_msToken)
 
 
 # Model
@@ -351,18 +353,8 @@ class LiveImFetch(BaseWebCastModel):
 
 
 class UserLiveRank(BaseWebCastModel):
-    aid: str = "6383"
-    app_name: str = "douyin_web"
-    live_id: str = "1"
-    device_platform: str = "web"
     language: str = "zh-CN"
     enter_from: str = "web_homepage_follow"
-    cookie_enabled: str = "true"
-    screen_width: str = "1920"
-    screen_height: str = "1080"
-    browser_language: str = "zh-CN"
-    browser_platform: str = "Windows"
-    browser_name: str = "Edge"
     browser_version: str = "134.0.0.0"
     webcast_sdk_version: str = "0"
     room_id: str

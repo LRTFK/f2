@@ -2,6 +2,7 @@
 
 import asyncio
 import importlib
+import sys
 import traceback
 import typing
 
@@ -12,8 +13,10 @@ from f2 import helps
 from f2.apps import __apps__ as apps_module
 from f2.cli.cli_console import RichConsoleManager
 from f2.cli.wizard_command import config_wizard_command
+from f2.exceptions import F2Error
 from f2.i18n.translator import TranslationManager, _
-from f2.log.logger import logger, trace_logger
+from f2.log.logger import log_setup, logger, trace_logger
+from f2.utils.core.run_report import collect_run_report
 from f2.utils.core.signal import SignalManager
 from f2.utils.version import check_f2_version, check_python_version
 
@@ -113,6 +116,69 @@ for attr in dir(apps_module):
 
 REVERSE_APP_MAPPINGS = {v: k for k, v in APP_MAPPINGS.items()}
 
+# 运行结束时最多列出的下载失败文件数
+MAX_FAILED_DOWNLOADS_SHOWN = 10
+
+
+NO_LOG_FILE_OPTION = "--no-log-file"
+# 根命令中带值的选项，预扫描参数时要跳过它们的值
+_ROOT_OPTIONS_WITH_VALUE = {"-d", "--debug", "-l", "--languages"}
+
+
+def file_logging_disabled(args: typing.Sequence[str]) -> bool:
+    """
+    检查根命令参数里是否带有 --no-log-file，只看子命令之前的部分
+    (Check whether the root command arguments contain --no-log-file)
+
+    日志要在 click 解析参数之前初始化（-d/--debug 等选项的回调需要输出日志），
+    所以不能等 click 解析完再决定是否写文件，只能先预扫描一遍参数（#293）。
+    """
+    skip_value = False
+    for arg in args:
+        if skip_value:
+            skip_value = False
+            continue
+        if arg == NO_LOG_FILE_OPTION:
+            return True
+        if arg in _ROOT_OPTIONS_WITH_VALUE:
+            skip_value = True
+        elif not arg.startswith("-"):
+            # 遇到子命令名，后面的参数属于应用命令
+            return False
+    return False
+
+
+def setup_cli_logging(log_to_file: bool = True) -> None:
+    """
+    配置 CLI 日志：控制台输出，并按需写入 ./logs 目录（作为库导入 f2 时不会执行）
+    (Configure CLI logging: console output plus optional log files under ./logs)
+
+    Args:
+        log_to_file (bool): 是否写入日志文件；为 False 时不创建 logs 目录，也不清理旧日志
+    """
+
+    log_path = "./logs" if log_to_file else None
+    log_setup(log_to_console=True, log_name="f2", log_path=log_path)
+    log_setup(
+        log_to_console=False,
+        log_name="f2-trace",
+        lazy_file_creation=True,
+        log_path=log_path,
+    )
+
+
+def report_f2_error(error: F2Error) -> None:
+    """
+    报告中止运行的 F2Error (Report the F2Error that aborted the run)
+
+    异常在构造时不记录日志，这里统一输出一次：控制台一行错误原因加帮助链接，
+    完整堆栈写入 f2-trace 日志。需要在 except 块中调用。
+    """
+
+    trace_logger.error(traceback.format_exc())
+    logger.error(_("运行中止：{0}").format(error))
+    logger.info(_("请前往QA文档 https://f2.wiki/faq 查看相关帮助"))
+
 
 class DynamicGroup(click.Group):
     """
@@ -124,6 +190,8 @@ class DynamicGroup(click.Group):
     - 无
 
     类方法:
+    - main: 重写 click.Group 的 `main` 方法，在解析参数前配置 CLI 日志。
+    - invoke: 重写 click.Group 的 `invoke` 方法，统一报告子命令抛出的 F2Error 并以退出码 1 结束。
     - get_command: 重写 click.Group 的 `get_command` 方法，根据传入的命令名称 `cmd_name` 查找并导入对应应用的 CLI 模块。
         执行异步检查任务并返回相关命令。如果发生错误，返回 None。
 
@@ -159,6 +227,23 @@ class DynamicGroup(click.Group):
         app_commands = list(APP_MAPPINGS.keys()) + list(REVERSE_APP_MAPPINGS.keys())
 
         return sorted(builtin_commands + app_commands)
+
+    def main(self, *args: typing.Any, **kwargs: typing.Any) -> typing.Any:
+        # 在解析参数前配置日志，保证 -d/--debug 等选项回调中的日志可正常输出；
+        # 带有 --no-log-file 时只输出到控制台
+        argv = kwargs.get("args", args[0] if args else None)
+        argv = sys.argv[1:] if argv is None else list(argv)
+        setup_cli_logging(log_to_file=not file_logging_disabled(argv))
+        return super().main(*args, **kwargs)
+
+    def invoke(self, ctx: click.Context) -> typing.Any:
+        # 应用命令在开始下载前（例如读取配置时）抛出的 F2Error 也在这里统一报告，
+        # 不再打印完整堆栈；下载过程中的异常由 set_cli_config 处理
+        try:
+            return super().invoke(ctx)
+        except F2Error as e:
+            report_f2_error(e)
+            ctx.exit(1)
 
     def get_command(self, ctx: click.Context, cmd_name: str):
         # 首先检查是否是内置命令
@@ -221,6 +306,12 @@ class DynamicGroup(click.Group):
     callback=handler_language,
 )
 @click.option(
+    NO_LOG_FILE_OPTION,
+    is_flag=True,
+    expose_value=False,
+    help=_("不写入日志文件，只在控制台输出，也不会创建 logs 目录"),
+)
+@click.option(
     "--check-version",
     is_flag=True,
     expose_value=False,
@@ -264,8 +355,27 @@ def set_cli_config(ctx: click.Context, **kwargs):
         **kwargs: 关键字参数，代表CLI的各种设置选项
     """
 
-    with RichConsoleManager().progress:
-        asyncio.run(run_app(kwargs))
+    with collect_run_report() as report, RichConsoleManager().progress:
+        try:
+            asyncio.run(run_app(kwargs))
+        except F2Error as e:
+            # 业务错误：堆栈只进 trace 日志，控制台给出一行结论并返回非零退出码
+            report_f2_error(e)
+            ctx.exit(1)
+
+    # 有文件最终下载失败时同样返回非零退出码，便于脚本判断结果
+    if not report.ok:
+        failed = report.failed_downloads
+        logger.error(_("有 {0} 个文件下载失败：").format(len(failed)))
+        for path in failed[:MAX_FAILED_DOWNLOADS_SHOWN]:
+            logger.error(f"  {path}")
+        if len(failed) > MAX_FAILED_DOWNLOADS_SHOWN:
+            logger.error(
+                _("以及另外 {0} 个文件").format(
+                    len(failed) - MAX_FAILED_DOWNLOADS_SHOWN
+                )
+            )
+        ctx.exit(1)
 
 
 async def run_app(kwargs):

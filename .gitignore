@@ -151,14 +151,14 @@ logs/
 *.rar
 *.7z
 
-# i18n
-*.po
+# i18n（.po 是翻译源文件，需要提交）
 *.pot
 *.po~
 
 # secret
 .pypirc
 f2-secrets
+f2/conf/test.local.yaml
 
 # MacOS
 .DS_Store

@@ -20,6 +20,7 @@ outline: deep
 | `-o`   | `--max-counts` | `INTEGER` | 最大作品下载数 |
 | `-s`   | `--page-counts` | `INTEGER` | 每页获取作品数 |
 | `-P`   | `--proxies` | `TEXT...` | 代理服务器 |
+|        | `--insecure` | `FLAG` | 关闭 TLS 证书校验 |
 |        | `--update-config` | `BOOLEAN` | 更新配置文件 |
 |        | `--init-config` | `TEXT` | 初始化配置文件 |
 |        | `--auto-cookie` | `ENUM` | 自动获取cookie |
@@ -32,6 +33,8 @@ outline: deep
 
 指定配置文件的路径，优先级最低。默认**主配置文件**路径为 `f2/conf/app.yaml`，支持**绝对路径**与**相对路径**。
 
+配置文件无法解析时，`F2` 会给出出错的行号与列号；文件顶层不是键值映射或没有该应用的配置时同样直接报错，并以退出码 `1` 结束。没有该应用的配置时，可以用 `--init-config` 向该文件补充默认配置。
+
 ### `--url`
 
 根据模式提供相应的链接。
@@ -39,6 +42,10 @@ outline: deep
 ### `--path`
 
 推文保存位置。默认为当前目录下的 `Download`。支持**绝对路径**与**相对路径**。
+
+::: tip :bulb: 提示
+推文按 `<path>/twitter/<mode>/<用户昵称>` 分目录保存。用户修改昵称后，再次下载该用户（任一模式）时会把各下载模式下旧昵称的目录一起重命名为新昵称，已下载的推文随目录保留，文件名没有变化的推文不会重新下载；之后再改名也会继续跟随。某个模式下新昵称的目录已经存在时，该模式的两个目录都保持不变并在日志中提示，手动合并并删除旧目录后不再提示。
+:::
 
 ### `--folderize`
 
@@ -64,6 +71,7 @@ outline: deep
 
 ::: tip :bulb: 提示
 - `custom_fields` 为自定义字段，开发者可以自定义字段映射，详见：[全局格式化文件名 🟢](/guide/apps/twitter/overview#全局格式化文件名-🟢)。
+- 文件名中的文案与昵称会原样保留标点、空格和各国文字，只把系统不允许的字符 `\ / : * ? " < > |` 换成外观相近的全角字符（例如 `?` 换成 `？`），换行等控制字符会换成空格或去掉；文案超过 200 字节时会截断中间部分，整个文件名连同后缀超过 255 字节时也会截断中间部分，这样也能保存到 NAS 等按字节限制文件名长度的位置；Windows 下路径超过 260 个字符时会自动改用长路径，不需要修改系统设置。
 :::
 
 ### `--cookie`
@@ -75,8 +83,8 @@ outline: deep
 :::
 
 ::: tip :bulb: 提示
-- `Twitter` 还需要额外获取 `X-Csrf-Token`，请确保在[**F2配置文件**](/site-config#主配置文件)中配置。
-- 无法采集或风控时请及时更新 `Cookie` 与 `X-Csrf-Token`。
+- `Twitter` 的请求需要 `X-Csrf-Token`。`F2` 会自动使用 `cookie` 中的 `ct0`，复制完整的 `cookie` 即可；只有 `cookie` 里没有 `ct0` 时，才会使用[**F2配置文件**](/site-config#主配置文件)中的 `X-Csrf-Token`。
+- 无法采集或风控时请及时更新 `Cookie`。
 - 不可以出现除 `ascii` 以外的字符，更新配置前请仔细检查。
 :::
 
@@ -159,6 +167,14 @@ f2 x --proxies socks5 user:pass@127.0.0.1:1080
 >     password: pass  # 可选
 > ```
 
+### `--insecure`
+
+关闭 `TLS` 证书校验，仅建议在受信任的调试代理环境中使用。该选项只对本次运行生效，不会写入配置文件；需要持久关闭请在 `conf.yaml` 中设置 `verify: false`。详见：[证书校验](/site-config#证书校验)。
+
+```bash
+f2 x --insecure --proxies http 127.0.0.1:8888 ...
+```
+
 ### `--update-config`
 
 通过 `CLI` 参数更新配置文件。详见：[配置Cookie](/site-config#配置Cookie)。
@@ -180,6 +196,10 @@ f2 x --proxies socks5 user:pass@127.0.0.1:1080
 - `brave`
 - `vivaldi`
 - `librewolf`
+
+获取成功后会把 cookie 写入配置文件（用 `-c` 指定了自定义配置文件时写入该文件）并退出，不会开始下载；获取失败时输出原因并以退出码 `1` 结束。
+
+Windows 上的新版 Chrome、Edge 暂时无法自动获取 cookie，解决办法见 [FAQ](/faq#自动获取-cookie-失败-unable-to-get-key-for-cookie-decryption)。
 
 不支持切换浏览器用户配置。
 

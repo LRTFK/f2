@@ -4,7 +4,7 @@
 
 [![Downloads](https://pepy.tech/badge/f2/month)](https://pepy.tech/project/f2)
 [![PyPI version](https://badge.fury.io/py/f2.svg)](https://badge.fury.io/py/f2)
-[![Dev Branch](https://badgen.net/badge/branch/v0.0.1.7-pw2/blue)](https://github.com/Johnserf-Seed/f2/tree/v0.0.1.7-pw2)
+[![Dev Branch](https://badgen.net/badge/branch/v0.0.1.8-pw3/blue)](https://github.com/Johnserf-Seed/f2/tree/v0.0.1.8-pw3)
 [![Discord](https://img.shields.io/discord/1146473603450282004?label=Discord)](https://discord.gg/3PhtPmgHf8)
 [![codecov](https://codecov.io/gh/Johnserf-Seed/f2/graph/badge.svg?token=T9DH4QPZSS)](https://codecov.io/gh/Johnserf-Seed/f2)
 [![TikHub](https://img.shields.io/badge/%E8%B5%9E%E5%8A%A9%E5%95%86-TikHub-orange?style=flat-square&logo=tiktok)](https://beta-web.tikhub.io/users/signup?referral_code=6hLcGD94)
@@ -12,6 +12,8 @@
 
 
 [简体中文 readme](https://github.com/Johnserf-Seed/f2/blob/main/README.md) • [English readme](https://github.com/Johnserf-Seed/f2/blob/main/README.en.md)
+
+> 仓库默认显示开发分支（目前为 `v0.0.1.8-pw3`），其中的改动可能尚未发布到 PyPI。正式版的使用文档以 [f2.wiki](https://f2.wiki) 为准。
 
 `F2` 是一个 [Python](https://pypi.org/project/f2/) 库，提供多平台的作品下载与接口数据处理。支持 `DouYin`、`TikTok`、`Twitter`、`WeiBo` 等平台，且方便适配更多平台。
 
@@ -182,6 +184,7 @@
   |---|---|---|---|
   | 管理客户端配置     | `ClientConfManager` |   -    |  🟢  |
   | 生成随机数字字节   | - | `generate_numeric_bytes` |  🟢  |
+  | 生成随机字母数字字节 | - | `generate_alphanumeric_bytes` |  🟢  |
 </details>
 
 <details>
@@ -1030,7 +1033,7 @@
 
 ## 👨‍💻 贡献
 
-如果你有兴趣为 `F2` 贡献代码，请查看[贡献指南](https://github.com/Johnserf-Seed/f2/blob/main/CONTRIBUTING.md)。
+如果你有兴趣为 `F2` 贡献代码，请查看[贡献指南](https://github.com/Johnserf-Seed/f2/blob/v0.0.1.8-pw3/CONTRIBUTING.md)。`PR` 请提交到当前开发分支 `v0.0.1.8-pw3`（见顶部 `Dev Branch` 徽章），不要提交到 `main`。
 
 ## 🙏 鸣谢
 
@@ -1042,6 +1045,7 @@
 - [click](https://github.com/pallets/click)
 - [rich](https://github.com/Textualize/rich)
 - [httpx](https://github.com/encode/httpx)
+- [curl_cffi](https://github.com/lexiforest/curl_cffi)
 - [aiofiles](https://github.com/Tinche/aiofiles)
 - [aiosqlite](https://github.com/omnilib/aiosqlite)
 - [jsonpath-ng](https://github.com/h2non/jsonpath-ng)

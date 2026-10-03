@@ -82,15 +82,18 @@ from f2.apps.douyin.utils import (  # VerifyFpManager,
     ClientConfManager,
     MixIdFetcher,
     SecUserIdFetcher,
+    TokenManager,
     WebCastIdFetcher,
     create_or_rename_user_folder,
 )
 from f2.cli.cli_console import RichConsoleManager
 from f2.exceptions.api_exceptions import APIResponseError
+from f2.exceptions.base import F2Error
 from f2.i18n.translator import _
 from f2.log.logger import logger
-from f2.utils.core.decorators import mode_function_map, mode_handler
-from f2.utils.time.timestamp import get_timestamp, interval_2_timestamp, timestamp_2_str
+from f2.utils.core.decorators import get_mode_handlers, mode_handler
+from f2.utils.file.path import is_user_folder_migrated
+from f2.utils.time.timestamp import get_timestamp, parse_interval, timestamp_2_str
 
 rich_console = RichConsoleManager().rich_console
 rich_prompt = RichConsoleManager().rich_prompt
@@ -309,6 +312,17 @@ class DouyinHandler:
         if not local_user_data:
             await db.add_user_info(**current_user_data._to_dict())
             logger.debug(_("用户：{0} 已添加到数据库").format(current_nickname))
+        # 昵称变化且各下载模式的旧目录都已改名时，把数据库中的昵称改为新昵称，
+        # 以后再改名时从新昵称开始处理；还有旧目录时保留旧昵称，下次运行继续处理
+        elif is_user_folder_migrated(
+            kwargs, "douyin", local_user_data.get("nickname"), current_nickname
+        ):
+            await db.update_user_info(
+                sec_user_id=sec_user_id,
+                nickname=current_nickname,
+                nickname_raw=current_user_data.nickname_raw,
+            )
+            logger.debug(_("用户：{0} 的新名称已更新到数据库").format(current_nickname))
 
         return user_path
 
@@ -349,12 +363,8 @@ class DouyinHandler:
         """
 
         aweme_id = await AwemeIdFetcher.get_aweme_id(str(self.kwargs.get("url")))
-
-        try:
-            aweme_data = await self.fetch_one_video(aweme_id)
-        except APIResponseError as e:
-            logger.error(e)
-            return
+        # 接口异常直接向上抛出，由 CLI 记录并以非零退出码结束
+        aweme_data = await self.fetch_one_video(aweme_id)
 
         async with AsyncUserDB("douyin_users.db") as db:
             user_path = await self.get_or_add_user_data(
@@ -398,6 +408,17 @@ class DouyinHandler:
             video = PostDetailFilter(response)
 
             if video.nickname is None:
+                # 作品被删除、设为私密等情况下，接口会在 filter_detail 中说明原因
+                filter_detail = (
+                    response.get("filter_detail")
+                    if isinstance(response, dict)
+                    else None
+                )
+                reason = (filter_detail or {}).get("detail_msg")
+                if reason:
+                    raise APIResponseError(
+                        _("作品 {0} 无法获取：{1}").format(aweme_id, reason)
+                    )
                 # 说明接口内容异常
                 raise APIResponseError(
                     _(
@@ -449,13 +470,11 @@ class DouyinHandler:
         max_cursor = self.kwargs.get("max_cursor", 0)
         page_counts = self.kwargs.get("page_counts", 20)
         max_counts = self.kwargs.get("max_counts")
-        interval = self.kwargs.get("interval")
 
-        # 判断是否提供了interval参数，如果有则获取start_date转时间戳提供给max_cursor
-        if interval is not None and interval != "all":
-            # 倒序查找
-            min_cursor = interval_2_timestamp(interval, date_type="start")
-            max_cursor = interval_2_timestamp(interval, date_type="end")
+        # 提供了日期区间时，从区间结束时间开始倒序翻页，翻过开始时间后停止
+        time_range = parse_interval(self.kwargs.get("interval"), unit="milli")
+        if time_range:
+            min_cursor, max_cursor = time_range
 
         # 获取用户数据并返回创建用户目录
         sec_user_id = await SecUserIdFetcher.get_sec_user_id(
@@ -1233,23 +1252,34 @@ class DouyinHandler:
         max_cursor = self.kwargs.get("max_cursor", 0)
         page_counts = self.kwargs.get("page_counts", 20)
         max_counts = self.kwargs.get("max_counts")
+        url = str(self.kwargs.get("url"))
 
-        # 先假定合集链接获取合集ID
+        # 合集、短剧链接可以直接解析出合集ID；不是合集链接时，再按合集中的作品链接处理
+        sec_user_id = None
         try:
             logger.info(_("正在从合集链接获取合集ID"))
-            mix_id = await MixIdFetcher.get_mix_id(str(self.kwargs.get("url")))
-            async for aweme_data in self.fetch_user_mix_videos(mix_id, 0, 20, 1):
-                logger.info(_("正在从合集作品里获取sec_user_id"))
-                sec_user_id = aweme_data.sec_user_id[0]  # 注意这里是一个列表
-        except Exception as e:
-            logger.warning(_("获取合集ID失败，尝试从合集作品链接中解析。"))
-            # 如果获取失败，则假定作品链接获取作品ID
+            mix_id = await MixIdFetcher.get_mix_id(url)
+        except APIResponseError as exc:
+            logger.warning(
+                _("获取合集ID失败，尝试从合集作品链接中解析：{0}").format(exc)
+            )
             logger.info(_("正在从合集作品链接获取合集ID"))
-            aweme_id = await AwemeIdFetcher.get_aweme_id(str(self.kwargs.get("url")))
+            aweme_id = await AwemeIdFetcher.get_aweme_id(url)
             one_video_data = await self.fetch_one_video(aweme_id)
             # 从 one_video_data 获取 sec_user_id 和 mix_id
             sec_user_id = one_video_data.sec_user_id
             mix_id = one_video_data.mix_id
+            if not mix_id:
+                raise APIResponseError(_("作品 {0} 不属于任何合集").format(aweme_id))
+
+        if not sec_user_id:
+            async for aweme_data in self.fetch_user_mix_videos(mix_id, 0, 20, 1):
+                logger.info(_("正在从合集作品里获取sec_user_id"))
+                sec_user_ids = aweme_data.sec_user_id or []  # 注意这里是一个列表
+                sec_user_id = sec_user_ids[0] if sec_user_ids else None
+                break
+        if not sec_user_id:
+            raise APIResponseError(_("合集 {0} 中没有作品").format(mix_id))
 
         async with AsyncUserDB("douyin_users.db") as db:
             user_path = await self.get_or_add_user_data(self.kwargs, sec_user_id, db)
@@ -2165,7 +2195,11 @@ class DouyinHandler:
 
         # user = await self.fetch_query_user()
 
-        async with DouyinCrawler(self.kwargs) as crawler:
+        # 弹幕初始化接口强校验 cookie 中的 x-web-secsdk-uid，缺少时补上随机值（#412）
+        kwargs = self.kwargs | {
+            "cookie": TokenManager.ensure_secsdk_uid(self.kwargs.get("cookie"))
+        }
+        async with DouyinCrawler(kwargs) as crawler:
             params = LiveImFetch(room_id=room_id, user_unique_id=unique_id)
             response = await crawler.fetch_live_im_fetch(params)
             live_im = LiveImFetchFilter(response)
@@ -2249,6 +2283,7 @@ class DouyinHandler:
                 # WebcastDecorationModifyMethod
                 # WebcastLinkSettingNotifyMessage
                 # WebcastLinkMicBattleMethod
+                # WebcastBackupSEIMessage
             }
 
         async with DouyinWebSocketCrawler(self.kwargs, callbacks=wss_callbacks) as wss:
@@ -2266,8 +2301,16 @@ class DouyinHandler:
 
             result = await wss.fetch_live_danmaku(params)
 
-            if result == "closed":
-                logger.info(_("直播间：{0} 已结束直播或断开了本地连接").format(room_id))
+            if result == "no_client":
+                logger.info(
+                    _(
+                        "本地 WebSocket 服务器没有客户端连接，已停止接收直播间：{0} 的弹幕，直播可能仍在进行"
+                    ).format(room_id)
+                )
+            elif result == "closed":
+                logger.info(
+                    _("直播间：{0} 的弹幕连接已关闭，可能已结束直播").format(room_id)
+                )
             elif result == "error":
                 logger.error(_("直播间：{0} 弹幕连接异常").format(room_id))
 
@@ -2798,7 +2841,8 @@ class DouyinHandler:
 
 async def main(kwargs):
     mode = kwargs.get("mode")
-    if mode in mode_function_map:
-        await mode_function_map[mode](DouyinHandler(kwargs))
+    handlers = get_mode_handlers(__name__)
+    if mode in handlers:
+        await handlers[mode](DouyinHandler(kwargs))
     else:
-        logger.error(_("不存在该模式: {0}").format(mode))
+        raise F2Error(_("不存在该模式: {0}").format(mode))

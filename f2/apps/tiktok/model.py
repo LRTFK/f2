@@ -1,14 +1,10 @@
 # path: f2/apps/tiktok/models.py
 
-import traceback
-from typing import Any
-from urllib.parse import quote, unquote
+from urllib.parse import quote
 
 from pydantic import BaseModel
 
-from f2.apps.tiktok.utils import ClientConfManager, TokenManager
-from f2.i18n.translator import _
-from f2.log.logger import logger
+from f2.apps.tiktok.utils import ClientConfManager
 from f2.utils.time.timestamp import get_timestamp
 
 
@@ -22,12 +18,10 @@ class BaseRequestModel(BaseModel):
     browser_name: str = ClientConfManager.brm_browser().get("name", "Mozilla")
     browser_online: str = "true"
     browser_platform: str = ClientConfManager.brm_browser().get("platform", "Win32")
-    browser_version: str = quote(
-        ClientConfManager.brm_browser().get(
-            "version",
-            "5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
-        ),
-        safe="",
+    # 保存原始值，由 XGnarlyManager 与网页一样按 RFC 3986 编码后签名
+    browser_version: str = ClientConfManager.brm_browser().get(
+        "version",
+        "5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0",
     )
     channel: str = "tiktok_web"
     cookie_enabled: str = "true"
@@ -53,10 +47,10 @@ class BaseRequestModel(BaseModel):
     webcast_language: str = ClientConfManager.base_request_model().get(
         "webcast_language", "zh-Hans"
     )
-    tz_name: str = quote(
-        ClientConfManager.base_request_model().get("tz_name", "Asia/Hong_Kong"), safe=""
+    tz_name: str = ClientConfManager.base_request_model().get(
+        "tz_name", "Asia/Hong_Kong"
     )
-    msToken: str = TokenManager.gen_real_msToken()
+    # msToken 不在业务参数中：由 XGnarlyManager 签名时追加，只使用 cookie 中已有的值
 
 
 class BaseWebCastModel(BaseModel):
@@ -174,6 +168,10 @@ class CheckLiveAlive(BaseRequestModel):
 
 
 class LiveImFetch(BaseWebCastModel):
+    # 与 www 接口一样使用新版签名：保存原始值，由 XGnarlyManager 编码后签名，msToken 签名时从 cookie 读取
+    browser_version: str = BaseRequestModel.model_fields["browser_version"].default
+    host: str = "https://webcast.tiktok.com"
+    tz_name: str = BaseRequestModel.model_fields["tz_name"].default
     # resp_content_type: str = "protobuf"
     device_id: str = ""
     did_rule: int = 3
@@ -185,7 +183,6 @@ class LiveImFetch(BaseWebCastModel):
     room_id: str
     history_comment_count: int = 6
     history_comment_cursor: str = "7386962392254958354"
-    msToken: str = TokenManager.gen_real_msToken()
 
 
 class LiveWebcast(BaseWebCastModel):

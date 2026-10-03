@@ -59,11 +59,14 @@ outline: [2,3]
 | :---------------------- | :--------------------- | :-------------------------- | :----: |
 | Manage client configuration | `ClientConfManager`    |                              |  🟢  |
 | Generate real msToken  | `TokenManager`         | `gen_real_msToken`           |  🟢  |
+| Get cached real msToken | `TokenManager`        | `cached_msToken`             |  🟢  |
 | Generate fake msToken  | `TokenManager`         | `gen_false_msToken`          |  🟢  |
 | Generate ttwid         | `TokenManager`         | `gen_ttwid`                  |  🟢  |
+| Generate x-web-secsdk-uid | `TokenManager`      | `gen_secsdk_uid`             |  🟢  |
 | Generate webid         | `TokenManager`         | `gen_webid`                  |  🟢  |
 | Generate verify_fp     | `VerifyFpManager`      | `gen_verify_fp`              |  🟢  |
 | Generate s_v_web_id    | `VerifyFpManager`      | `gen_s_v_web_id`             |  🟢  |
+| Generate gateway headers | `GatewayHeaderManager` | `gen_gateway_headers`      |  🟢  |
 | Generate live signature | `DouyinWebcastSignature` | `get_signature`            |  🟢  |
 | Generate Xb params using API URL | `XBogusManager`        | `str_2_endpoint`             |  🟢  |
 | Generate Xb params using API model | `XBogusManager`        | `model_2_endpoint`           |  🟢  |
@@ -155,6 +158,7 @@ Live Room Hot Chat Messages | `DouyinWebSocketCrawler` | `WebcastHotChatMessage`
 | Save Last Requested Work ID | `DouyinDownloader` | `save_last_aweme_id` | 🟢 |
 | Create Download Task | `DouyinDownloader` | `create_download_task` | 🟢 |
 | Handle Download Task | `DouyinDownloader` | `handler_download` | 🟢 |
+| Download Video or Gallery by Post Data | `DouyinDownloader` | `download_media` | 🟢 |
 | Download Original Sound | `DouyinDownloader` | `download_music` | 🟢 |
 | Download Cover | `DouyinDownloader` | `download_cover` | 🟢 |
 | Download Caption | `DouyinDownloader` | `download_desc` | 🟢 |
@@ -172,6 +176,7 @@ Live Room Hot Chat Messages | `DouyinWebSocketCrawler` | `WebcastHotChatMessage`
 - If `max_counts` is set to `None` or omitted, all available work data will be retrieved.
 - Can be conveniently integrated with backend frameworks like `FastAPI`, `Flask`, and `Django`.
 - Using a logged-in `cookie` bypasses the account's privacy settings, allowing access to private `works`, `homepage`, `likes`, `collections`, etc.
+- The downloader no longer relies on a fixed list of post types: gallery posts and posts with images are downloaded as galleries, and any other post with a video link is downloaded as a video, so new types such as `51`, `53`, and `66` work too. When a post has nothing to download, is blocked, or has an unsupported visibility status, a warning explains why.
 :::
 
 ## Handler Interface List
@@ -195,6 +200,7 @@ Asynchronous method to retrieve or create user data while also creating a user d
 ::: tip :bulb: Note
 - This is a `CLI` mode interface, and developers can define their own user directory creation functionality.
 - If the `mode` parameter is not set, it defaults to the `PLEASE_SETUP_MODE` directory.
+- After a user changes their nickname, the directories of the old nickname in every download mode are renamed together (see `create_or_rename_user_folder`), and the nickname in the database is updated once all of them are renamed; if a conflict or a failed rename leaves an old directory, the old nickname is kept and the next run handles it again.
 :::
 
 ### Create Video Download Record 🟢
@@ -577,7 +583,7 @@ Queries basic user information using `ttwid`. Use `fetch_user_profile` for more 
 
 ### Livestream WSS Load Data 🟢
 
-Asynchronous method to fetch livestream WSS load data, required for handling chat messages.
+Asynchronous method to fetch livestream WSS load data, required for handling chat messages. If the cookie lacks `x-web-secsdk-uid`, `F2` adds one automatically; otherwise the API returns an empty response.
 
 | Parameter  | Type | Description |
 | :-------- | :-- | :---------- |
@@ -724,6 +730,20 @@ Class method to generate a real `msToken`. Returns a fake value if an error occu
 
 <<< @/snippets/douyin/token-manager.py#mstoken-real-sinppest{4}
 
+### Get Cached Real msToken 🟢
+
+Class method that returns the real `msToken` cached for the current process; it is only generated over the network on the first call. Request models use it as the default value of their `msToken` field when instantiated, so importing a module no longer makes network requests.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| None | None | None |
+
+| Return | Type | Description |
+| :--- | :--- | :--- |
+| msToken | str | The cached real `msToken` |
+
+<<< @/snippets/douyin/token-manager.py#mstoken-cached-sinppest{4}
+
 ### Generate Fake msToken 🟢
 
 Class method to generate a random fake `msToken`. The length varies by endpoint.
@@ -755,6 +775,20 @@ Class method to generate `ttwid`. Required for some requests and necessary in gu
 | ttwid | str | The `ttwid` parameter |
 
 <<< @/snippets/douyin/token-manager.py#ttwid-sinppest{4}
+
+### Generate x-web-secsdk-uid 🟢
+
+Class method to generate the `x-web-secsdk-uid` cookie field, which is a random UUID. The livestream chat initialization API strictly validates this field; when the cookie passed to `fetch_live_im` does not contain it, `F2` adds one automatically with `ensure_secsdk_uid`.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| None | None | None |
+
+| Return | Type | Description |
+| :--- | :--- | :--- |
+| secsdk_uid | str | The `x-web-secsdk-uid` parameter |
+
+<<< @/snippets/douyin/token-manager.py#secsdk-uid-sinppest{4}
 
 ### Generate webid 🟢
 
@@ -797,6 +831,20 @@ Class method to generate `s_v_web_id`, which is required for some requests.This 
 | s_v_web_id | str | The `s_v_web_id` parameter |
 
 <<< @/snippets/douyin/token-manager.py#s-v-web-id-sinppest{4}
+
+### Generate Gateway Headers 🟢
+
+Class method that builds the headers required by Douyin's API gateway from a `cookie`: it always includes `x-tt-argus`, and adds `uifid` when the `cookie` contains `UIFID` (or `UIFID_TEMP` when logged out). `DouyinCrawler` attaches these headers automatically; headers you configure yourself take precedence.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| cookie | str | The cookie used for requests; may be empty |
+
+| Return | Type | Description |
+| :--- | :--- | :--- |
+| headers | dict | Headers to attach |
+
+<<< @/snippets/douyin/token-manager.py#gateway-headers-sinppest{4}
 
 ### Generate Livestream Signature 🟢
 
@@ -955,7 +1003,7 @@ Class method used to extract a list of post IDs.
 
 ### Extract Single Collection ID 🟢
 
-Class method used to extract a collection ID from a collection URL.
+Class method used to extract a collection ID from a collection or short drama URL. It supports collection pages (`collection/`), collection share pages (`share/mix/detail/`), short drama share pages (`share/playlet/detail/`), and short links that redirect to them. When the URL already contains the collection ID, it is returned without sending a request.
 
 | Parameter | Type | Description |
 | :-------- | :--- | :---------- |
@@ -969,7 +1017,7 @@ Class method used to extract a collection ID from a collection URL.
 
 ### Extract List of Collection IDs 🟢
 
-Class method used to extract collection IDs from a list of collection URLs.
+Class method used to extract collection IDs from a list of collection or short drama URLs. It supports the same URL formats as above.
 
 | Parameter | Type  | Description  |
 | :-------- | :---- | :----------- |
@@ -1024,9 +1072,9 @@ For example, the 3rd and 4th links in `raw_urls` will only return `room_id`.To r
 Format filenames globally according to the configuration file.
 
 ::: details :page_facing_up: Filename Formatting Rules
-- `Windows` filename length limit: `255` characters (or `32,767` if long filenames are enabled).
-- `Unix` filename length limit: `255` characters.
-- Extracts up to `20` characters after sanitization, plus the file extension, ensuring filenames generally remain within `255` characters.
+- Captions (`desc`) longer than `200` bytes are shortened in the middle and joined with `......`.
+- When downloading, the whole file name including its suffix is kept within `255` bytes and shortened in the middle if needed. This is the limit of `ext4` and most `NAS` file systems; `NTFS` and `APFS` count characters and are never exceeded.
+- On `Windows`, paths longer than `260` characters automatically use the extended-length form (`\\?\`), so long path support does not need to be enabled.
 - Developers can customize the `custom_fields` parameter to define custom filenames.
 :::
 
@@ -1095,7 +1143,7 @@ If the directory does not exist, it will be created first before renaming.
 
 ### Create or Rename User Directory 🟢
 
-Used to create or rename a user directory. It is a combination of the two interfaces above.
+Used to create or rename a user directory. When the nickname in the local record (`local_user_data["nickname"]`) differs from the current nickname, the directories of the old nickname in every download mode are renamed to the current nickname and the downloaded files are kept; without a local record, or when the nickname has not changed, the user directory is simply created.
 
 | Parameter          | Type  | Description            |
 | :---------------- | :---- | :--------------------- |
@@ -1108,7 +1156,10 @@ Used to create or rename a user directory. It is a combination of the two interf
 | user_path | Path  | User directory path object |
 
 ::: tip :bulb: Note
-This interface effectively solves the issue of duplicate downloads when a user changes their nickname. It is integrated into the `handler` interface, so developers only need to call the `handler` data interface.
+- Directories are computed the same way as `create_user_folder` (`path`, app name, `mode`); every download mode directory of the app under the current `path` is handled, and the user directory of the current download mode is returned.
+- A mode without a directory of the old nickname is skipped. If the directory of the new nickname already exists in a mode, both directories of that mode are left as they are, nothing is overwritten or merged, and a message is logged.
+- If renaming fails (for example because a file in the directory is in use by another program), a message is logged; the current mode keeps using the old directory this time and renaming is retried on the next run.
+- It is integrated into `get_or_add_user_data` of the `handler`, which updates the nickname in the database once the old directories in every mode have been renamed, so developers only need to call the `handler` data interface.
 :::
 
 ### Convert JSON Lyrics to LRC Lyrics 🟢

@@ -94,6 +94,7 @@ Asynchronous method to retrieve or create user data while also generating a user
 ::: tip :bulb: Tips
 - This is a `CLI` mode interface, developers can define their own user directory creation functionality.
 - If `mode` is not set, it defaults to the `PLEASE_SETUP_MODE` directory.
+- After a user changes their nickname, the directories of the old nickname in every download mode are renamed together (see `create_or_rename_user_folder`), and the nickname in the database is updated once all of them are renamed; if a conflict or a failed rename leaves an old directory, the old nickname is kept and the next run handles it again.
 :::
 
 ### Fetch User Info (UID) 🟢
@@ -177,6 +178,7 @@ Asynchronous method to retrieve a user's Weibo posts.
 | feature | int | Weibo type |
 | since_id | str | Starting Weibo ID |
 | max_counts | int | Maximum number of Weibo posts |
+| interval | tuple | Publish time range as `(start, end)` UNIX timestamps in seconds, inclusive; unlimited by default |
 
 | Returns | Type | Description |
 | :--- | :--- | :--- |
@@ -310,9 +312,9 @@ Class method to extract multiple Weibo usernames from a list of Weibo profile UR
 
 Formats filenames globally based on the configuration file.
 ::: details :page_facing_up: Filename Formatting Rules
-- `Windows` filename length limit: `255` characters; with long filename support, up to `32,767` characters.
-- `Unix` filename length limit: `255` characters.
-- Extracts `20` characters from the cleaned name and appends the suffix, ensuring it generally does not exceed `255` characters.
+- Captions (`desc`) longer than `200` bytes are shortened in the middle and joined with `......`.
+- When downloading, the whole file name including its suffix is kept within `255` bytes and shortened in the middle if needed. This is the limit of `ext4` and most `NAS` file systems; `NTFS` and `APFS` count characters and are never exceeded.
+- On `Windows`, paths longer than `260` characters automatically use the extended-length form (`\\?\`), so long path support does not need to be enabled.
 - Developers can define custom fields in `custom_fields` to generate custom filenames.
 :::
 
@@ -380,7 +382,7 @@ If the directory does not exist, it will first create the user directory before 
 
 ### Create or Rename User Directory 🟢
 
-Used to create or rename a user directory. It combines the two interfaces above.
+Used to create or rename a user directory. When the nickname in the local record (`local_user_data["nickname"]`) differs from the current nickname, the directories of the old nickname in every download mode are renamed to the current nickname and the downloaded files are kept; without a local record, or when the nickname has not changed, the user directory is simply created.
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
@@ -393,7 +395,10 @@ Used to create or rename a user directory. It combines the two interfaces above.
 | user_path | Path | User directory path object |
 
 ::: tip :information_source: Tip
-This interface effectively solves the problem of duplicate directory creation when users rename themselves. It is integrated into the `handler` interface. Developers do not need to worry about it; they can directly call the data interface of `handler`.
+- Directories are computed the same way as `create_user_folder` (`path`, app name, `mode`); every download mode directory of the app under the current `path` is handled, and the user directory of the current download mode is returned.
+- A mode without a directory of the old nickname is skipped. If the directory of the new nickname already exists in a mode, both directories of that mode are left as they are, nothing is overwritten or merged, and a message is logged.
+- If renaming fails (for example because a file in the directory is in use by another program), a message is logged; the current mode keeps using the old directory this time and renaming is retried on the next run.
+- It is integrated into `get_or_add_user_data` of the `handler`, which updates the nickname in the database once the old directories in every mode have been renamed, so developers only need to call the `handler` data interface.
 :::
 
 ### Extract Weibo Text 🟢

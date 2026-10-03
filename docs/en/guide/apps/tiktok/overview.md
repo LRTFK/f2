@@ -14,8 +14,8 @@ outline: [2,3]
 | :---------------------- | :-------------------  |
 | Download a single video | `handle_one_video`    |
 | Download user posts     | `handle_user_post`    |
-| Download user likes     | `handle_user_like`    |
-| Download user favorites | `handle_user_collect` |
+| Download user favorites  | `handle_user_like`    |
+| Download user collection | `handle_user_collect` |
 | Download user playlist  | `handle_user_mix`     |
 | Download search videos  | `handle_search_video` |
 | Download user live stream | `handle_user_live` |
@@ -27,8 +27,8 @@ outline: [2,3]
 | Create video download record | `get_or_add_video_data` |     🟢      |
 | Fetch single video data     | `fetch_one_video`       |     🟢      |
 | Fetch user posts data       | `fetch_user_post_videos` |     🟢      |
-| Fetch user liked videos     | `fetch_user_like_videos` |     🟢      |
-| Fetch user favorites        | `fetch_user_collect_videos` |  🟢      |
+| Fetch user favorites        | `fetch_user_like_videos` |     🟢      |
+| Fetch user collection       | `fetch_user_collect_videos` |  🟢      |
 | Fetch user playlists        | `fetch_play_list`        |     🟢      |
 | Fetch user playlist videos  | `fetch_user_mix_videos`  |    🟢     |
 | Fetch search results        | `fetch_search_videos`    |     🟢      |
@@ -42,11 +42,13 @@ outline: [2,3]
 | :--------------- | :-------------- | :------------------ | :--: |
 | Manage client config | `ClientConfManager`   |                  |  🟢  |
 | Generate real msToken | `TokenManager`     | `gen_real_msToken`   |  🟢  |
+| Get cached real msToken | `TokenManager`   | `cached_msToken`     |  🟢  |
 | Generate fake msToken | `TokenManager`     | `gen_false_msToken`  |  🟢  |
 | Generate ttwid        | `TokenManager`     | `gen_ttwid`          |  🟢  |
 | Generate odin_tt      | `TokenManager`      | `gen_odin_tt`        |  🟢  |
 | Generate Xb params from URL | `XBogusManager` | `str_2_endpoint`    |  🟢  |
 | Generate Xb params from model | `XBogusManager` | `model_2_endpoint` |  🟢  |
+| Generate new signature params from model | `XGnarlyManager` | `model_2_endpoint` |  🟢  |
 | Extract single user ID | `SecUserIdFetcher` | `get_secuid`        |  🟢  |
 | Extract list of user IDs | `SecUserIdFetcher` | `get_all_secuid`   |  🟢  |
 | Extract single unique user ID | `SecUserIdFetcher` | `get_uniqueid` |  🟢  |
@@ -68,8 +70,8 @@ outline: [2,3]
 | :------------- | :------------- | :------------------ | :--: |
 | User profile API | `TiktokCrawler` | `fetch_user_profile` |  🟢  |
 | User posts API   | `TiktokCrawler` | `fetch_user_post`    |  🟢  |
-| User likes API   | `TiktokCrawler` | `fetch_user_like`    |  🟢  |
-| User favorites API | `TiktokCrawler` | `fetch_user_collect` |  🟢  |
+| User favorites API  | `TiktokCrawler` | `fetch_user_like`    |  🟢  |
+| User collection API | `TiktokCrawler` | `fetch_user_collect` |  🟢  |
 | User playlist API | `TiktokCrawler` | `fetch_user_play_list` |  🟢  |
 | Playlist videos API | `TiktokCrawler` | `fetch_user_mix` |  🟢  |
 | Video details API | `TiktokCrawler` | `fetch_post_detail` |  🟢  |
@@ -97,7 +99,7 @@ outline: [2,3]
 - All APIs with pagination use asynchronous generators, requiring iteration with `async for` for automatic pagination handling.
 - If `max_counts` is set to `None` or omitted, all available video data will be fetched.
 - These APIs can be easily integrated into backend frameworks like `FastAPI`, `Flask`, and `Django`.
-- Using a logged-in `cookie` allows bypassing privacy restrictions, such as private `videos`, `profile`, `likes`, and `favorites`.
+- Using a logged-in `cookie` allows bypassing privacy restrictions, such as private `videos`, `profile`, `favorites`, and `collection`.
 :::
 
 ## Handler Interface List
@@ -173,7 +175,7 @@ Asynchronous method to retrieve a list of videos from a specified user's playlis
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
-| secUid | str | Collection ID |
+| secUid | str | User ID |
 | cursor | int | Page number, default is `0` |
 | page_counts | int | Number of pages, default is `20` |
 
@@ -242,7 +244,8 @@ Asynchronous method to fetch or create user data while creating a user directory
 <<< @/snippets/tiktok/user-get-add.py{17-23}
 
 ::: tip :bulb: Hint
-This is an interface for `cli` mode. Developers can define their own functions to create user directories.
+- This is an interface for `cli` mode. Developers can define their own functions to create user directories.
+- After a user changes their username (`uniqueId`), the directories of the old username in every download mode are renamed together (see `create_or_rename_user_folder`), and the username in the database is updated once all of them are renamed; if a conflict or a failed rename leaves an old directory, the old username is kept and the next run handles it again.
 :::
 
 ### Create Video Download Record 🟢
@@ -279,7 +282,7 @@ Class method to manage client configuration.
 
 ### Generate Real `msToken` 🟢
 
-Class method to generate a real `msToken`. Returns a fake value in case of errors.
+Class method that generates a real `msToken` through the mssdk API and raises `APIResponseError` when the API does not issue one. The length of `msToken` changes with the SDK version (currently 168 characters), so only its presence is checked. `F2`'s own requests no longer call it and read `msToken` from the cookie instead.
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
@@ -290,6 +293,20 @@ Class method to generate a real `msToken`. Returns a fake value in case of error
 | msToken | str | Real `msToken` |
 
 <<< @/snippets/tiktok/token-manager.py#mstoken-real-sinppest{4}
+
+### Get Cached Real msToken 🟢
+
+Class method that returns the real `msToken` cached for the current process; it is only generated over the network on the first call. `F2`'s own requests no longer call it: request models of both `www.tiktok.com` and `webcast.tiktok.com` no longer carry `msToken`, which is read from the cookie when signing.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| None | None | None |
+
+| Return | Type | Description |
+| :--- | :--- | :--- |
+| msToken | str | The cached real `msToken` |
+
+<<< @/snippets/tiktok/token-manager.py#mstoken-cached-sinppest{4}
 
 ### Generate Fake `msToken` 🟢
 
@@ -382,9 +399,33 @@ Data collection is also possible using a crawler engine with a filter.
 
 For more advanced use cases, call `fetch_user_profile` from the `handler` interface.
 
+### Generate New Signature Parameters Using API Model 🟢
+
+Class method that generates the web SDK signature parameters for `www.tiktok.com` APIs, appending `X-Dynosaur`, `msToken`, `X-Bogus` (always `1`) and `X-Gnarly` after the business parameters, in that order. Live APIs on `webcast.tiktok.com` (checking live status and initializing live danmaku) use it as well; with only `X-Bogus`, the danmaku initialization API returns empty responses.
+
+| Parameter | Type | Description |
+| :--- | :--- | :--- |
+| user_agent | str | User agent; must match the `User-Agent` header of the request |
+| base_endpoint | str | API endpoint |
+| params | dict | Request parameters |
+| cookie | str | User cookie; `msToken` is read from it |
+
+| Return | Type | Description |
+| :--- | :--- | :--- |
+| final_endpoint | str | The complete API URL with signature parameters |
+
+<<< @/snippets/tiktok/xgnarly.py#model-2-endpoint-snippet{14-16}
+
+::: warning :warning: Note
+- `msToken` only comes from the value already in the cookie and is left empty otherwise; a fake `msToken` makes the API return empty responses.
+- Parameter values are encoded per RFC 3986 before signing and the signature covers exactly these bytes, so the URL must not be re-encoded or reordered before sending.
+- `www.tiktok.com` and `webcast.tiktok.com` APIs check the client's TLS and HTTP/2 fingerprints, so requests sent by `httpx` only get empty responses even when the signature is correct. `TiktokCrawler` automatically impersonates Chrome for these requests through `curl_cffi`, which is installed with `F2`; when sending requests yourself, use a client that can impersonate a browser fingerprint as well.
+- APIs such as user profile (`/api/user/detail/`) require a logged-in cookie; a guest cookie only gets empty responses.
+:::
+
 ### Extract Single User ID 🟢
 
-Class method to extract a single user ID.
+Class method to extract a single user ID. Profile URLs in the form `https://www.tiktok.com/@username` are supported; for URLs in the form `https://www.tiktok.com/user/<sec_uid>`, the `sec_uid` is taken from the URL directly without a request.
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
@@ -508,9 +549,9 @@ Class method to generate multiple `deviceId` and `tt_chain_token` values.
 Formats filenames globally based on the configuration file.
 
 ::: details :page_facing_up: Filename Formatting Rules
-- `Windows`: Filename length is limited to `255` characters (or `32,767` with long filename support).
-- `Unix`: Filename length is limited to `255` characters.
-- Truncates to `20` characters, plus suffix, to stay within the `255` limit.
+- Captions (`desc`) longer than `200` bytes are shortened in the middle and joined with `......`.
+- When downloading, the whole file name including its suffix is kept within `255` bytes and shortened in the middle if needed. This is the limit of `ext4` and most `NAS` file systems; `NTFS` and `APFS` count characters and are never exceeded.
+- On `Windows`, paths longer than `260` characters automatically use the extended-length form (`\\?\`), so long path support does not need to be enabled.
 - Developers can customize `custom_fields` to define their own filenames.
 :::
 
@@ -536,7 +577,7 @@ If no path is specified in the configuration file, the default is `Download`. Bo
 ├── Download
 │   ├── tiktok
 │   │   ├── post
-│   │   │   ├── user_nickname
+│   │   │   ├── user_uniqueId
 │   │   │   │   ├── 2023-12-31_23-59-59_desc
 │   │   │   │   │   ├── 2023-12-31_23-59-59_desc-video.mp4
 │   │   │   │   │   ├── 2023-12-31_23-59-59_desc-desc.txt
@@ -549,7 +590,7 @@ If no path is specified in the configuration file, the default is `Download`. Bo
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | kwargs | dict | `cli` configuration file |
-| nickname | Union[str, int] | User nickname |
+| uniqueId | Union[str, int] | Username (uniqueId) |
 
 | Return | Type | Description |
 | :--- | :--- | :--- |
@@ -564,7 +605,7 @@ Used to rename a user directory.
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | old_path | Path | Old user directory path object |
-| new_nickname | str | New user nickname |
+| new_uniqueId | str | New username (uniqueId) |
 
 | Return | Type | Description |
 | :--- | :--- | :--- |
@@ -578,20 +619,23 @@ If the directory does not exist, it will be created before renaming.
 
 ### Create or Rename User Directory 🟢
 
-Used to create or rename a user directory. This is a combination of the two interfaces above.
+Used to create or rename a user directory. TikTok user directories are named after the username (`uniqueId`). When the username in the local record (`local_user_data["uniqueId"]`) differs from the current username, the directories of the old username in every download mode are renamed to the current username and the downloaded files are kept; without a local record, or when the username has not changed, the user directory is simply created.
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
 | kwargs | dict | cli configuration file |
 | local_user_data | dict | Local user data |
-| current_nickname | str | Current user nickname |
+| current_uniqueId | str | Current username (uniqueId) |
 
 | Return | Type | Description |
 | :--- | :--- | :--- |
 | user_path | Path | User directory path object |
 
 ::: tip :bulb: Note
-This interface effectively resolves the issue of duplicate downloads when a user changes their nickname. It is integrated into the `get_or_add_user_data` method in the handler interface, so developers can call the handler’s data interface directly without worrying about this issue.
+- Directories are computed the same way as `create_user_folder` (`path`, app name, `mode`); every download mode directory of the app under the current `path` is handled, and the user directory of the current download mode is returned.
+- A mode without a directory of the old username is skipped. If the directory of the new username already exists in a mode, both directories of that mode are left as they are, nothing is overwritten or merged, and a message is logged.
+- If renaming fails (for example because a file in the directory is in use by another program), a message is logged; the current mode keeps using the old directory this time and renaming is retried on the next run.
+- It is integrated into `get_or_add_user_data` of the `handler`, which updates the username in the database once the old directories in every mode have been renamed; when only the new username is known (single video, live), the local record is also looked up by `secUid`, so developers only need to call the `handler` data interface.
 :::
 
 ## crawler Interface

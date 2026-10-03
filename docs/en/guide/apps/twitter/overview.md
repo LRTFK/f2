@@ -93,6 +93,7 @@ Asynchronous method to fetch or create user data while creating a user directory
 ::: tip :bulb: Tips
 - This is a `CLI`-based interface, and developers can define their own user directory creation functionality.
 - If `mode` is not set, it defaults to `PLEASE_SETUP_MODE` directory.
+- After a user changes their nickname, the directories of the old nickname in every download mode are renamed together (see `create_or_rename_user_folder`), and the nickname in the database is updated once all of them are renamed; if a conflict or a failed rename leaves an old directory, the old nickname is kept and the next run handles it again.
 :::
 
 ### Fetch User Profile 🟢
@@ -250,9 +251,9 @@ Class method for extracting multiple tweet IDs.
 Formats filenames globally based on the configuration file.
 
 ::: details :page_facing_up: Filename Formatting Rules
-- `Windows` filename limit: `255` characters (or `32,767` with long filename support).
-- `Unix` filename limit: `255` characters.
-- Extracts `20` characters after cleaning and appends the suffix, ensuring the filename remains under `255` characters.
+- Captions (`desc`) longer than `200` bytes are shortened in the middle and joined with `......`.
+- When downloading, the whole file name including its suffix is kept within `255` bytes and shortened in the middle if needed. This is the limit of `ext4` and most `NAS` file systems; `NTFS` and `APFS` count characters and are never exceeded.
+- On `Windows`, paths longer than `260` characters automatically use the extended-length form (`\\?\`), so long path support does not need to be enabled.
 - Developers can use the `custom_fields` parameter to customize filenames.
 :::
 
@@ -320,7 +321,7 @@ If the directory does not exist, it will first create the user directory before 
 
 ### Create or Rename User Directory 🟢
 
-Used to create or rename a user directory. A combination of the two interfaces above.
+Used to create or rename a user directory. When the nickname in the local record (`local_user_data["nickname"]`) differs from the current nickname, the directories of the old nickname in every download mode are renamed to the current nickname and the downloaded files are kept; without a local record, or when the nickname has not changed, the user directory is simply created.
 
 | Parameter | Type | Description |
 | :--- | :--- | :--- |
@@ -333,7 +334,10 @@ Used to create or rename a user directory. A combination of the two interfaces a
 | user_path | Path | User directory path object |
 
 ::: tip :information_source: Note
-This interface effectively prevents redundant directory creation when a user changes their nickname. Integrated into the `handler` interface, developers do not need to worry about it—just call the data interface of `handler` directly.
+- Directories are computed the same way as `create_user_folder` (`path`, app name, `mode`); every download mode directory of the app under the current `path` is handled, and the user directory of the current download mode is returned.
+- A mode without a directory of the old nickname is skipped. If the directory of the new nickname already exists in a mode, both directories of that mode are left as they are, nothing is overwritten or merged, and a message is logged.
+- If renaming fails (for example because a file in the directory is in use by another program), a message is logged; the current mode keeps using the old directory this time and renaming is retried on the next run.
+- It is integrated into `get_or_add_user_data` of the `handler`, which updates the nickname in the database once the old directories in every mode have been renamed, so developers only need to call the `handler` data interface.
 :::
 
 ### Extract Weibo Text 🟢

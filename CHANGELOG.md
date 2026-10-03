@@ -6,6 +6,95 @@
 
 ## [Unreleased]
 
+- 润色英文翻译：逐条审阅全部 935 条英文文案，改写其中 650 条。统一术语（作品 post、主页 profile、直播 livestream、直播间 live room、弹幕 danmaku、接口地址 API endpoint、配置文件 configuration file；抖音与 TikTok 按平台接口的命名，点赞（喜欢）为 favorites、收藏为 collection、收藏夹为 collection folder、合集为 mix，Twitter 仍用 likes 与 bookmarks），消息改为普通句式、不再逐词首字母大写，同一句中文只保留一种译法。修正误译：“配置文件的路径，最低优先”曾译为 highest priority，“配置文件路径无写权限”曾译为“配置文件不存在”，FAQ 提示的两句英文粘在一起，Bark 密钥长度把“位”（字符）译成了 bits；下载进度的状态与文件类型标签统一为 Done、Skipped、Video、Caption 等。收藏夹列表的提示不再用方括号，避免被 rich 当作样式标签。横幅的英文简介改为 “An asynchronous, multi-platform downloader”；英文文档中抖音、TikTok 的模式说明与 CLI 帮助统一叫法，TikTok 播放列表接口的 `secUid` 说明由“合集ID”更正为“用户ID”。
+- 补齐英文翻译：此前有 217 条文案在英文界面下仍显示中文，其中 102 条从未翻译，115 条因原文修改被标记为待确认（编译时会被跳过），涉及代理设置、下载进度、断点续传、m3u8 直播流、数据库与抖音弹幕、评论等提示；现在全部有英文译文，原有 718 条译文不变。
+- TikTok 的 `https://www.tiktok.com/user/<sec_uid>` 链接直接从地址中取出 `sec_uid`，不再发请求（#366）：这类页面里没有用户数据，此前会报“未在响应中找到 __UNIVERSAL_DATA_FOR_REHYDRATION__”或“接口状态码异常”。直播模式需要用户名，请使用 `@用户名` 形式的主页链接。
+- 直播弹幕因本地 WebSocket 服务器没有客户端连接而停止时，不再提示“直播间已结束直播”：抖音与 TikTok 的本地转发服务在超时时间内没有客户端连接时会断开与弹幕服务器的连接，此前与直播结束一样返回 `closed`，现在返回 `no_client`，并提示“本地 WebSocket 服务器没有客户端连接，已停止接收直播间的弹幕，直播可能仍在进行”；因其他原因关闭时提示“弹幕连接已关闭，可能已结束直播”，不再断言直播已经结束。`WebSocketCrawler.close_websocket` 新增 `reason` 参数，爬虫主动关闭连接时 `receive_messages` 返回该原因。
+- 修复本地弹幕转发服务的端口被占用时抛出 `UnboundLocalError` 的问题：启动失败后 `finally` 仍会关闭尚未创建的服务器，这个异常要等弹幕接收结束才抛出并打断调用；现在只记录启动失败的原因，弹幕照常接收。
+- 修复 TikTok 检查开播状态（`fetch_check_live_alive`）与直播弹幕初始化（`fetch_live_im`）一调用就报错“msToken 内容不符合要求”的问题：这两个请求模型不再联网生成 `msToken`，与 `www.tiktok.com` 的接口一样在签名时从 cookie 读取。实测 `webcast.tiktok.com` 的 `im/fetch` 现在只接受新版签名加浏览器指纹（只用 X-Bogus，或只换成 curl_cffi，都返回空内容），两个直播接口因此改用 `XGnarlyManager` 签名并由 curl_cffi 发送；检查开播、初始化与 WebSocket 接收弹幕的完整流程已实测可用。CLI 的直播下载模式（`-M live`）不经过这两个接口，此前不受影响。
+- `TokenManager.gen_real_msToken` 只检查 mssdk 是否下发了 `msToken`，不再要求 152 位：接口下发的 `msToken` 现在是 168 位，此前会误报“msToken 内容不符合要求”；没有下发时也不会再把字符串 `None` 当成 `msToken`。
+- 修复 TikTok 网页接口返回 200 空内容的问题（#384）：`www.tiktok.com` 的接口改用网页 SDK 的新版签名，在业务参数之后依次追加 `X-Dynosaur`、`msToken`、`X-Bogus`（固定为 `1`）与 `X-Gnarly`，签名前按 RFC 3986 编码参数值，与浏览器抓包一致；`msToken` 只从 cookie 读取，没有时留空，不再联网生成或伪造，`www.tiktok.com` 的请求模型不再携带 `msToken`。这些接口还会校验 TLS 与 HTTP/2 指纹，`httpx` 发出的请求即使签名正确也只会得到空内容，`TiktokCrawler` 现在通过新增的运行时依赖 `curl_cffi`（`>=0.16.3,<0.17`，MIT 协议）模拟 Chrome 发送 `www.tiktok.com` 的请求，`webcast.tiktok.com` 与文件下载仍使用 `httpx`；缺少 `curl_cffi` 时（例如使用 `--no-deps` 安装）回退 `httpx` 并在日志中提示。用户信息等接口需要登录后的 cookie，用户发布作品用游客 cookie 也能获取。新增纯 Python 实现的 `f2.utils.crypto.bytedance.xgnarly`、`XGnarlyManager` 与 `f2.utils.http.impersonate`，FAQ 新增对应条目。
+- TikTok 获取 `secUid`（`SecUserIdFetcher`）与设备 ID（`DeviceIdManager`）时不再生成 `msToken`：旧的 `msToken` 生成接口已失效，此前会在发出请求前就报错“msToken 内容不符合要求”；主页与首页的 HTML 不需要 `msToken`。
+- `getXBogus` 计算签名时纳入请求体：此前固定按空请求体计算，传入的 `body` 被忽略。F2 自身目前只给 GET 请求签名，签名不变；作为库给 POST 请求签名时才会受影响。
+- 微博 `--page-counts` 的帮助与文档如实说明对微博不生效：微博主页接口不支持指定每页数量，每页固定返回约 20 条，需要限制数量时请使用 `--max-counts`。
+- 修复 twitter 主页推文与书签在一页只有一个条目时崩溃的问题：`jsonpath_ng` 对超出列表长度的负数下标（如只有 1 项时取 `[-2]`）会抛出 `IndexError`，`min_cursor` 因此报错，连带 `_to_list`、`_to_dict` 失败。`JSONModel` 的查询现在把这种情况视为字段缺失，所有平台的过滤器都受益。
+- 抖音按分辨率与码率选择最高清晰度（#214）：此前固定取清晰度列表的第一项，而接口按码率排序，2K、4K 只有 H.265 版本时码率可能低于 1080p 的 H.264，会下载到 1080p。现在先比较分辨率、再比较码率，清晰度列表为空时改用 `video.play_addr`；普通作品下载的文件不变。新增 `select_best_bit_rate`、`get_video_play_urls`。最高清晰度可能只有 H.265 编码，FAQ 已说明。
+- 抖音作品被删除或设为私密时，报错给出接口返回的原因（如“因作品权限或已被删除，无法观看”），不再提示“动图作品接口正在维护中”。
+- `--auto-cookie` 读取 Chrome、Edge 失败时给出原因与解决办法（#193、#205）：Windows 上的新版 Chrome、Edge 改用了应用绑定加密，`browser_cookie3`（0.20.1，目前的最新版）还不能解密。报错 `Unable to get key for cookie decryption` 时现在会提示改用 `--auto-cookie firefox` 或手动复制 cookie，并附上 FAQ 链接；cookie 数据库被占用时提示关闭浏览器后重试。FAQ 新增对应条目，各应用的 `--auto-cookie` 说明链接到它。新增 `f2.utils.http.browser.explain_browser_error`。
+- 修复 `--auto-cookie` 获取失败时退出码仍为 `0` 的问题：`finally` 中的 `ctx.exit(0)` 会覆盖失败时的 `abort`。现在读取浏览器失败、没有取到 cookie 或权限不足时输出原因并以退出码 `1` 结束，确认更新配置时被取消（如输入已结束）同样以 `1` 结束；获取成功或选择不更新配置时仍为 `0`。
+- 没有提供 cookie 时抛出 `ConfError`，只报一行错误：此前抖音、TikTok、twitter、微博的下载器抛出 `ValueError`（`kwargs` 里没有 `cookie` 时是 `KeyError`），会打印完整堆栈。只检查是否提供了 cookie，空字符串仍然允许，因为抖音直播等请求不需要用户的 cookie；通过 CLI 运行时，配置里空的 cookie 是空字符串，所以主要影响作为库使用的场景。微博的提示文字与其他应用统一。
+- 修复作者改名后另建文件夹、重新下载全部作品的问题：此前 `create_or_rename_user_folder` 先按新名称建目录，再把新目录「重命名」为它自己，旧目录从不搬动。现在名称变化时，把各下载模式下旧名称的目录一起重命名为新名称，已下载的作品随目录保留；某个模式下新名称的目录已存在时，该模式的两个目录都保持不变，不覆盖也不合并，并在日志中提示；重命名失败（例如目录中的文件正被占用）时当前模式本次继续使用旧目录。各模式的旧目录都改名后，数据库中的名称更新为新名称（此前从不更新），作者以后再改名也能继续跟随；还有冲突或改名失败的旧目录时保留旧名称，下次运行继续处理。抖音、推特、微博按昵称，TikTok 按用户名（`uniqueId`）；TikTok 单个作品与直播模式按新用户名查不到本地记录时改按 `secUid` 查找。#248 调整文件名规则后很多作者的文件夹名会变化，升级后旧文件夹会在下次下载时自动改为新名称，不再另建文件夹（文件名变化的作品仍会按新名称重新下载一次）。新增 `f2.utils.file.path.get_user_folder_path`、`migrate_user_folder`、`migrate_user_folders` 与 `is_user_folder_migrated`；微博 `AsyncUserDB` 新增拼写正确的 `update_user_info`（`updat_user_info` 仍可使用）。
+- 抖音、TikTok、twitter 的日期区间格式错误或结束日期早于开始日期时，在发起请求前以一行错误退出（退出码 `1`）。此前只记一条日志：主页等模式会翻完全部页面，却因筛选失败一个作品都不下载，并且每页重复报错。校验在创建下载器时进行，作为库使用时同样生效；主页作品的翻页游标改用 `parse_interval` 计算，结果不变。
+- 配置错误中的配置项名称不再被日志脱敏打码：`ConfError` 的标签由 `Key` 改为 `Setting`（此前 `Key: interval` 会被当成密钥显示为 `Key: ***`）；`cookie`、`key`、`token` 等敏感配置项的值在异常文本中直接打码，此前被打码的只是键名，`Value` 中的值反而原样输出。`InvalidConfError`、`InvalidEncodingError` 的配置项与值改由 `ConfError` 统一追加。
+- 配置文件出错时只输出一行错误：`-c` 指定的配置文件无法解析时不再抛出 `RuntimeError` 并打印完整堆栈，而是给出出错的行号、列号与文件路径；文件不是 UTF-8 编码、顶层不是键值映射（此前抛出 `AttributeError`）或没有该应用的配置（此前抛出 `ValueError`）时同样只报一行，并以退出码 `1` 结束，缺少应用配置时提示可以用 `--init-config` 补充。用户级 `conf.yaml` 与 `--init-config` 遇到的解析错误也改为同样的一行格式。新增 `ConfigManager.get_app_config`。
+- `-c` 指定的配置文件不存在时，报错中显示用户给出的路径，不再显示包目录下的路径。
+- 修复一个文件无法保存就中止整批下载的问题（#179）：目录无法创建、文件无法打开或改名、`desc.txt` 等文本文件写入失败时，只把这个文件记为下载失败并继续下载其它文件，结束时列出失败的文件并以退出码 `1` 结束；这类本地文件错误不再换链接重复请求。`Path.exists` 遇到文件名过长时抛出的异常也不会再中止下载。
+- 文件名连同后缀超过 `255` 字节时截断中间部分（#179）：`ext4` 与多数 `NAS` 按字节限制文件名长度，中文文件名此前容易超出而无法保存。默认命名模板的文件名不会触及上限，不受影响；拼接了昵称、多段文案等字段的自定义模板生成的超长文件名会被截断，在 `Windows`、`macOS` 上已按原名下载的这类文件会按新名称重新下载一次。新增 `f2.utils.file.name.fit_filename`。
+- `Windows` 下路径超过 `260` 个字符时自动改用扩展长度路径（`\\?\`），不需要开启系统的长路径支持（#179）；新增 `f2.utils.file.path.long_path`。
+- 微博主页模式支持 `--interval` 日期区间（#222）：微博主页接口不支持按日期查询，改为从最新的微博开始翻页，只下载区间内发布的微博（首尾两天都包含，按北京时间计算），翻到区间开始之前的微博时停止；置顶微博在区间内时同样下载，不影响翻页。日期格式错误或结束日期早于开始日期时直接报错退出，不会发起请求。`fetch_user_weibo` 新增 `interval` 参数；新增 `f2.utils.time.timestamp.parse_interval`。
+- 修复微博主页模式的 `--max-counts` 不生效：此前没有传给翻页函数，总是下载全部微博；接口每页固定返回约 20 条，超出上限的部分会被截掉。
+- 修复 `--no-log-file` 时出错会把完整堆栈打印到控制台的问题：没有日志文件时错误堆栈直接丢弃，控制台只输出一行错误原因。
+- 语言切换测试改为写入配置副本，运行测试不再改动包内的 `conf.yaml`。
+- 文件名规则变化，升级后会按新文件名重新下载一次（#248）：文案与昵称不再把标点、空格、日文假名、emoji 等字符替换为下划线，只把系统不允许的 `\ / : * ? " < > |` 换成外观相近的全角字符，换行等控制字符换成空格或去掉，并去掉首尾空格与结尾的点。多数作品的文件名和部分作者的文件夹名会因此变化：作者文件夹会在下次下载时自动改为新名称，同步主页时文件名变化的作品会按新名称重新下载，旧文件仍留在文件夹中，可按需清理。各应用的命名模板文档已同步说明。
+- TikTok 生成设备 ID 时同样逐个读取 `Set-Cookie` 头，`tt_chain_token` 等值里带逗号时不再被截断；新增 `f2.utils.http.cookie.join_set_cookie_headers`，微博游客 cookie 也改用它。
+- 微博生成游客 cookie 时逐个读取 `Set-Cookie` 头，不再把多个头拼成一行后按逗号切分，值里带逗号时不会被截断（移植自 #434）。
+- 支持用户级 `conf.yaml` 覆盖默认配置（#377）：按优先级从低到高读取 `~/.f2/conf.yaml`、当前目录的 `conf.yaml` 与环境变量 `F2_CONFIG` 指定的文件，叠加在 `site-packages` 中的 `conf.yaml` 之上，只需写出要修改的部分；用户配置不会写回默认配置文件，界面语言仍由 `-l` 设置。
+- `--init-config` 不再覆盖已有的配置文件：文件里没有该应用时追加默认配置，已有时只补充缺少的配置项，已有的值、其他应用的配置和注释都会保留，修改前把原文件备份为同名 `.bak` 文件；配置文件无法解析或顶层不是键值映射时报错且不做修改。同一个文件可以依次为多个应用初始化。
+- CLI 新增全局选项 `--no-log-file`（#293）：写在应用名之前时只在控制台输出日志，不创建 `logs` 目录，也不清理旧日志，适合没有写文件权限的环境；作为库使用时本来就不会写日志文件。
+- 修复抖音直播弹幕无法获取的问题（#412）：弹幕初始化接口新增了对 cookie 字段 `x-web-secsdk-uid` 的强校验，缺少时返回空内容。`fetch_live_im` 现在会在 cookie 缺少该字段时自动补上随机值；新增 `TokenManager.gen_secsdk_uid` 与 `TokenManager.ensure_secsdk_uid`，文档示例的 cookie 同步更新（`__live_version__` 更新为 `1.1.4.7838`）。
+- 修复 Twitter 单条推文下载失败（#436、#404）：接口在 `instructions` 前面插入了 `TimelineClearCache` 指令，推文详情改为按指令内容与 `entryId` 定位目标推文；评论或回复的链接不再下载到上层推文（#234）；受限推文（`TweetWithVisibilityResults`）也能读取。
+- 修复 Twitter 推文文案为空时报 `'NoneType' object has no attribute 'strip'` 的问题（#436、#404）。
+- Twitter 视频只取 MP4 并按码率选择最高清晰度，不再依赖接口返回的变体顺序（#436、#368）；新增 `sort_mp4_urls`、`best_mp4_url`。
+- Twitter 自动把 `cookie` 中的 `ct0` 作为 `X-Csrf-Token`，并优先于配置文件里的值，避免两者不一致导致 403（#426，移植自 #442）。
+- Twitter 主页、点赞、书签推文的命名模板支持 `{uid}`（移植自 #442）。
+- 修复抖音 `51`、`53`、`66` 等新作品类型不下载的问题（#402）：下载器不再使用写死的作品类型名单，图集作品或带有图片的作品下载图集，其他作品只要有视频链接就下载视频；新增 `DouyinDownloader.download_media`。
+- 抖音作品没有可下载的视频或图片、或可见状态不支持下载时输出警告并注明原因，此前会静默跳过。
+- 修复查询串不超过 32 个字符时生成 X-Bogus 抛出越界异常或得到错误签名的问题（#389）：原始字符串一律按原文计算 md5，只对 md5 摘要做十六进制解码；过短的自定义 `User-Agent` 同样受影响，已一并修复。正常长度查询串的签名不变。
+- 修复抖音合集下载失效（#423）：合集短链现在会跳转到短剧分享页 `share/playlet/detail/`，而 `MixIdFetcher` 只识别 `collection/`。现在支持合集页、合集分享页 `share/mix/detail/` 与短剧分享页，地址里已经带有合集 ID 时不再发起请求；短剧按合集下载。
+- 抖音合集模式不再吞掉解析错误：只有链接不是合集页时才改用作品链接解析，并在警告里给出原因；作品不属于任何合集或合集为空时以明确的错误结束（此前合集为空会报变量未绑定）。
+- 翻译源文件 `.po` 纳入版本控制：由现有 `.mo` 重建 `en_US.po` 与 `zh_CN.po`，放在各自 `.mo` 所在目录且不打包进 wheel；`make_pot` 脚本改为只用 `pybabel` 从 `f2` 与 `tests` 抽取文案、更新这两个 `.po` 并编译 `.mo`，位置引用只保留文件名；新增测试检查 `.mo` 与 `.po` 的译文一致。重建时移除了 74 条代码中已不存在的旧译文，现行文案的译文不变；`Babel` 开发依赖下限提高到 2.14.0。
+- 修复 GitHub 安全页的文档依赖告警：文档站 `vitepress` 升级到 1.6.4，并通过 `pnpm.overrides` 使用 `vite` 6.4.3，同时刷新锁文件中的 `esbuild`、`rollup`、`postcss`、`nanoid`、`preact` 与 `mdast-util-to-hast`；这些依赖只用于构建文档，不影响 PyPI 包。
+- 开发依赖升级：`black` 26.5.1（修复缓存文件任意写入漏洞，`pre-commit` 同步到同一版本，并按新版风格重新格式化）、`pytest` 9.1.1（修复临时目录处理漏洞）与 `pytest-asyncio` 1.4.0（旧版不支持 `pytest` 9）。
+- `bark` 推送加密使用 `ECB` 模式时输出安全警告；保留该模式只为兼容 Bark App 的同名选项，推荐使用 `CBC`。
+- `bark` 推送加密的随机 `iv` 改为由字母和数字组成，不再只用数字（此前 `GCM` 的 12 位 `iv` 只有约 40 比特随机性，同一密钥推送量大时可能重复）；新增 `generate_alphanumeric_bytes`。
+- Issue 模板改为表单：关键信息设为必填，新增「平台接口失效」与「文档问题」模板，关闭空白 issue，并把一般提问与功能想法引导到讨论区、安全问题引导到私密报告；新增按表单中所选平台自动添加标签的工作流。
+- 修复微博、TikTok、twitter 在第一页就结束或没有作品时报 `nickname_raw` 未绑定的问题（#401，此前只修复了抖音）。
+- 修复微博视频的类型为整数 `11` 时被判定为无法下载的问题（#249、#359）。
+- 修复 TikTok 主页作品翻页：接口返回字符串游标时第二页崩溃、最后一页之后从头重新抓取、空页面返回错误码时反复请求（#270）；点赞、收藏、合集每页作品数被重复计数，导致只下载到一半就结束。
+- 文档：快速上手与配置文件页中的 `f2 apps` 改为 `f2 dy` 等具体命令，列出各应用简称（#439）。
+- 贡献规范：`PR` 需提交到当前开发分支（目前为 `v0.0.1.8-pw3`），不要提交到 `main`；新增 `PR` 模板与目标分支检查工作流，`dependabot` 改为向开发分支提交更新，`README` 的开发分支徽章更新为 `v0.0.1.8-pw3`。
+- 异常在构造时不再输出日志：`CLI` 中止时只输出一行错误原因和 FAQ 链接，不再重复打印四五行错误；读取配置等准备阶段抛出的 `F2Error` 也按同样方式报告，不再打印完整堆栈。作为库使用时由调用方决定是否记录。
+- 修复 `FileError` 没有文件路径时异常信息为空的问题（移植自 #433）。
+- 修复出错时 `CLI` 退出码仍为 `0` 的问题：接口请求失败（HTTP 状态码错误、重试耗尽、网络错误、返回内容不是 JSON）不再被吞成空数据，而是抛出 `F2Error` 子类，`CLI` 以退出码 `1` 结束；有文件在所有链接都尝试后仍下载失败时，同样以退出码 `1` 结束并列出失败的文件。
+- 作为库使用时，`crawler` 与 `handler` 的方法在接口请求失败时抛出异常，不再返回空数据；接口异常的 `status_code` 为真实的 HTTP 状态码（此前为 `None`）。
+- 修复 `bark` 通知发送失败时仍提示发送成功的问题；`f2 bark` 发送失败时以退出码 `1` 结束，作为下载通知时失败仍只记录日志。
+- 修复抖音主页作品、单个作品、点赞、收藏等接口返回 `403`（`Blocked by ArgusSecurityPlugin`）的问题：请求自动附加网关要求的 `x-tt-argus` 请求头，并从 cookie 读取 `UIFID`/`UIFID_TEMP` 作为 `uifid` 请求头，游客 cookie 同样适用 #443（移植并扩展自 #446）。
+- `conf.yaml` 中 `douyin.headers` 的全部请求头都会生效，不再只取 `User-Agent` 与 `Referer`，便于手动覆盖网关请求头。
+- 新增 `f2.utils.http.cookie.parse_cookie_str`，把 Cookie 字符串解析为字典。
+- 测试配置支持通过环境变量 `F2_TEST_<APP>_<KEY>` 与 `conf/test.local.yaml` 覆盖，个人 cookie 无需写入仓库。
+- `wheel` 不再打包 `f2/apps/*/test` 测试目录与 `conf/test.yaml` 测试配置。
+- 新增 `security` 工作流：`gitleaks` 泄露扫描与 `wheel` 内容检查。
+- TLS 证书校验可配置：`conf.yaml` 新增 `verify`（默认开启），应用命令行新增 `--insecure`，作为库使用时可通过 `kwargs["verify"]` 传入。
+- 版本检查改用 `packaging` 比较版本号，并开启证书校验。
+- 修复分块下载重试时重复写入已下载字节的问题；服务器忽略 `Range` 返回整个文件时会重新下载而不是追加。
+- 修复 m3u8 分片下载修改共享客户端默认请求头，导致同一下载器上其它请求丢失 `Referer`/`Cookie` 的问题。
+- 导入 `f2` 模块不再产生副作用：请求模型的 `msToken` 改为首次实例化时获取并在进程内缓存（`TokenManager.cached_msToken`）；日志目录与日志文件仅在 CLI 启动或调用 `log_setup` 时创建；导入 `f2.utils.string.generator` 不再重置全局随机种子。
+- `log_setup` 新增 `log_path` 参数，可自定义日志目录或传 `None` 关闭文件日志。
+- 修复启动时清理旧日志会把当前进程刚创建的空日志文件一并删除、导致 macOS/Linux 下 CLI 日志文件丢失的问题。
+- 新增 `ci` 工作流：`ruff`/`black`/`isort`/`mypy` 检查、Python 3.10–3.13 测试矩阵（`pytest -m "not network"`）、构建与 `wheel` 冒烟测试，并接管 Codecov 上传。
+- 新增 `release` 工作流：发布 GitHub Release 后校验标签与版本号一致，并通过 PyPI Trusted Publishing 发布（草稿不触发，pre-release 只构建不发布）。
+- 删除 `pytest.ini`，pytest 配置统一到 `pyproject.toml`（此前 `pytest.ini` 优先生效，`testpaths` 与 `network` 标记的注册都未起作用）；`isort` 跳过被 git 忽略的目录。
+- 新增根异常 `f2.exceptions.F2Error`，接口/配置/数据库/文件四类异常都继承它；`CLI` 遇到 `F2Error` 时只输出一行错误并以退出码 `1` 结束（堆栈写入 `f2-trace` 日志），各应用 `handler.main` 对未知模式改为抛出异常。
+- 随包发布 `py.typed`，类型检查器可以使用 `f2` 的类型标注（分类器早已声明 `Typing :: Typed`）。
+- 富文本帮助（`-h`）补充 `--insecure` 选项，`-r` 显示为实际的 `--max_retries`；新增测试保证富文本帮助包含命令行定义的全部长选项。
+- 补充本分支新增文案的英文翻译（证书校验、断点续传重试、版本比较）。
+- 修复同一进程导入多个应用时模式表互相覆盖的问题：`mode_handler` 改为按应用注册，各应用 `handler.main` 通过 `get_mode_handlers(__name__)` 查找自己的模式；全局 `mode_function_map` 移除。
+- 运行时依赖改为版本范围（下限为已验证或已修复漏洞的版本，上限为已验证最新版的下一个大版本），`babel`、`mypy-protobuf` 移至开发依赖，移除 `importlib_resources`（改用标准库）；`click`、`protobuf`、`cryptography` 的下限提升到已修复已知漏洞的版本。
+- `security` 工作流新增 `pip-audit` 依赖漏洞扫描，并每周定时运行。
+- 日志脱敏：`f2` 记录器在输出与向上传播前自动打码 cookie、token、密钥、密码与代理地址中的凭据；各应用调试日志打印配置时经 `redact_config` 处理，`bark` 不再以明文记录 API 密钥与设备密钥，代理探测不再记录带密码的地址。
+- 修复全新安装后 `import f2` 报 `No module named 'sniffio'` 的问题：`httpx-socks` 升级到 0.11.0（0.10.x 使用 `sniffio` 但未声明依赖，新版 `anyio` 不再附带它）。
+- 平台接口用例统一标记为 `network`，`pytest` 默认收集 `tests` 与 `f2/apps`；新增 `ruff` 配置并修复未使用导入/变量与裸 `except`；`twitter` 的 `UniqueIdFetcher`/`TweetIdFetcher` 改为使用配置代理。
+- 更新文档：证书校验配置、`--insecure` 选项、测试凭据注入方式、直播分片请求头、msToken 获取方式、日志配置与 CI/发布流程说明。
 - 改进配置文件与快速上手文档的表述，提升可读性。
 - 新增文档，介绍如何扩展默认数据模型并在接口中使用自定义 `Filter`。
 - 将在 `0.0.1.8` 版本中添加 `BiliBili` & `NetEaseMusic` 支持。

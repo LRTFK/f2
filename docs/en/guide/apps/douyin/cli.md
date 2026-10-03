@@ -24,6 +24,7 @@ outline: [2,3]
 | `-o`   | `--max-counts` | `INTEGER` | Maximum number of downloads |
 | `-s`   | `--page-counts` | `INTEGER` | Number of works per page |
 | `-P`   | `--proxies` | `TEXT...` | Proxy server |
+|        | `--insecure` | `FLAG` | Disable TLS certificate verification |
 | `-L`   | `--lyric` | `BOOLEAN` | Whether to save the original lyrics |
 |        | `--update-config` | `BOOLEAN` | Update configuration file |
 |        | `--init-config` | `TEXT` | Initialize configuration file |
@@ -37,9 +38,11 @@ outline: [2,3]
 
 Specify the path to the configuration file, with the lowest priority. The default path for the **main configuration file** is `f2/conf/app.yaml`, which supports **absolute paths** and **relative paths**.
 
+If the file cannot be parsed, `F2` reports the line and column of the error; it also stops with an error if the top level is not a key-value mapping or the file has no settings for this app, exiting with code `1`. When the app's settings are missing, use `--init-config` to add the default settings to the file.
+
 ### `--url`
 
-Links are provided according to the pattern. For example, fill in the homepage link for homepage, likes, and favorite works, fill in the link of the work for a single work, and the collection is the same as for the live broadcast.
+Provide the link for the selected mode. For example, use the profile link for profile posts, favorites and collection, and the post link for a single post; mixes and livestreams work the same way.
 
 ### `--music`
 
@@ -57,6 +60,10 @@ Whether to save the video copy. Defaults to `true`. Keep the original desc infor
 
 The location where the video is saved. Defaults to `Download` in the current directory. Supports **absolute paths** and **relative paths**.
 
+::: tip :bulb: Tip
+Works are saved in `<path>/douyin/<mode>/<author nickname>`. When an author changes their nickname, the next download of that author (in any mode) renames the folders of the old nickname in every download mode to the new one, so the downloaded works stay with them and works whose file names have not changed are not downloaded again; later changes are followed as well. If a folder with the new nickname already exists in a mode, both folders of that mode are left as they are and a message is logged until you merge them and delete the old folder.
+:::
+
 ### `--folderize`
 
 Whether to save the video to a separate folder. Defaults to `true`.
@@ -64,19 +71,19 @@ Whether to save the video to a separate folder. Defaults to `true`.
 ### `--mode`
 
 Download mode:
-- `one`: a single video
-- `post`: Homepage videos
-- `like`: Liked videos
-- `collection`: collection of works
-- `collects`: favorite works
-- `music`: collection of music
-- `mix`: collection
-- `live`: live broadcast
+- `one`: single post
+- `post`: profile posts
+- `like`: favorites (posts the user liked)
+- `collection`: collection (posts the user collected)
+- `collects`: collection folders
+- `music`: music collection
+- `mix`: mix
+- `live`: livestream
 
 ::: info :information_source: Tips
 - `collection` mode requires login.
 - `music` mode requires the `--lyric` parameter to specify whether to save original lyrics.
-- `mix` mode requires the `--url` parameter, which can be a collection link or a link to a work in the collection.
+- `mix` mode takes a mix link, a short drama link, or a link to a post in the mix or short drama as `--url`. Douyin treats short dramas as mixes, so they are downloaded the same way.
 - `live` mode does not currently support special live broadcast rooms, such as `360°` live broadcast.
 :::
 
@@ -89,6 +96,10 @@ Global work file naming method. The default is `{create}_{desc}`, supported vari
 - `{aweme_id}`: work ID
 - `{desc}`: work copywriting
 - `{uid}`: Author ID
+
+::: tip :bulb: Tip
+In file names, captions and nicknames keep punctuation, spaces and all scripts as they are; only characters that file systems do not allow (`\ / : * ? " < > |`) are replaced with similar full-width characters (for example `?` becomes `？`), and newlines and other control characters are turned into spaces or removed. Captions longer than 200 bytes are shortened in the middle, and so is any file name that would exceed 255 bytes with its suffix, so files can also be saved to a NAS or other file systems that limit names by bytes. On Windows, paths longer than 260 characters automatically use the long path form, so no system setting needs to be changed. Use `--desc` to save the complete original caption to a `_desc.txt` file.
+:::
 
 ### `--cookie`
 
@@ -111,7 +122,7 @@ Global work file naming method. The default is `{create}_{desc}`, supported vari
 
 ### `--interval`
 
-Download works published within a date range, in the format: `Year-Month-Day|Year-Month-Day`. For example: `2022-01-01|2023-01-01`, set `all` to download all works.
+Download works published within a date range, in the format: `Year-Month-Day|Year-Month-Day`. For example: `2022-01-01|2023-01-01`, set `all` to download all works. Both days are included, and dates are in Beijing time (UTC+8). An invalid format, or an end date earlier than the start date, is reported as an error before any request is made.
 
 ### `--timeout`
 
@@ -146,6 +157,14 @@ Example: `--proxies http://x.x.x.x https://x.x.x.x`。
 > [!IMPORTANT] IMPORTANT ❗❗❗
 > **If the proxy does not support egress HTTPS, use: `--proxies http://x.x.x.x http://x.x.x.x`.**
 
+### `--insecure`
+
+Disable `TLS` certificate verification. Use it only behind a trusted debugging proxy. The flag affects the current run only and is not written to the configuration file; set `verify: false` in `conf.yaml` to disable it permanently. See [TLS certificate verification](/en/site-config#tls-certificate-verification).
+
+```bash
+f2 dy --insecure --proxies http 127.0.0.1:8888 ...
+```
+
 ### `--lyric`
 
 Whether to save the original lyrics. The default is `false`. Save in `.lrc` format.
@@ -171,6 +190,10 @@ Automatically obtain `cookie` from the browser. Please make sure to close the se
 - `brave`
 - `vivaldi`
 - `librewolf`
+
+On success, the cookie is written to the configuration file (the custom file given with `-c`, if any) and `F2` exits without downloading; on failure, it prints the reason and exits with code `1`.
+
+Cookies from the latest Chrome and Edge on Windows cannot be read automatically for now; see the [FAQ](/en/faq#auto-cookie-failed-unable-to-get-key-for-cookie-decryption) for workarounds.
 
 Not supported to switch browser user settings.
 

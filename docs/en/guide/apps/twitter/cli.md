@@ -20,6 +20,7 @@ outline: deep
 | `-o`   | `--max-counts` | `INTEGER` | Maximum number of works to download |
 | `-s`   | `--page-counts` | `INTEGER` | Number of works retrieved per page |
 | `-P`   | `--proxies` | `TEXT...` | Proxy servers |
+|        | `--insecure` | `FLAG` | Disable TLS certificate verification |
 |        | `--update-config` | `BOOLEAN` | Update configuration file |
 |        | `--init-config` | `TEXT` | Initialize configuration file |
 |        | `--auto-cookie` | `ENUM` | Automatically obtain cookies |
@@ -32,6 +33,8 @@ outline: deep
 
 Specifies the path to the configuration file, with the lowest priority. The default **main configuration file** path is `f2/conf/app.yaml`. Supports **absolute** and **relative paths**.
 
+If the file cannot be parsed, `F2` reports the line and column of the error; it also stops with an error if the top level is not a key-value mapping or the file has no settings for this app, exiting with code `1`. When the app's settings are missing, use `--init-config` to add the default settings to the file.
+
 ### `--url`
 
 Provides the corresponding link based on the mode.
@@ -39,6 +42,10 @@ Provides the corresponding link based on the mode.
 ### `--path`
 
 The save location for works. Defaults to `Download` in the current directory. Supports **absolute** and **relative paths**.
+
+::: tip :bulb: Tip
+Tweets are saved in `<path>/twitter/<mode>/<user nickname>`. When a user changes their nickname, the next download of that user (in any mode) renames the folders of the old nickname in every download mode to the new one, so the downloaded tweets stay with them and tweets whose file names have not changed are not downloaded again; later changes are followed as well. If a folder with the new nickname already exists in a mode, both folders of that mode are left as they are and a message is logged until you merge them and delete the old folder.
+:::
 
 ### `--folderize`
 
@@ -64,6 +71,7 @@ Global file naming format for works. Defaults to `{create}_{desc}`. Supported va
 
 ::: tip :bulb: Tip
 - `custom_fields` allows developers to define custom field mappings. See: [Global Formatting for Filenames 🟢](/guide/apps/twitter/overview#global-formatting-filenames-🟢).
+- In file names, captions and nicknames keep punctuation, spaces and all scripts as they are; only characters that file systems do not allow (`\ / : * ? " < > |`) are replaced with similar full-width characters (for example `?` becomes `？`), and newlines and other control characters are turned into spaces or removed. Captions longer than 200 bytes are shortened in the middle, and so is any file name that would exceed 255 bytes with its suffix, so files can also be saved to a NAS or other file systems that limit names by bytes. On Windows, paths longer than 260 characters automatically use the long path form, so no system setting needs to be changed.
 :::
 
 ### `--cookie`
@@ -75,8 +83,8 @@ Login `Cookie`. Most APIs require login to access data, so a logged-in `Cookie` 
 :::
 
 ::: tip :bulb: Tip
-- `Twitter` also requires `X-Csrf-Token`. Ensure it is configured in [**F2 Configuration File**](/site-config#main-configuration-file).
-- If unable to fetch data or facing restrictions, update `Cookie` and `X-Csrf-Token` promptly.
+- `Twitter` requests need an `X-Csrf-Token`. `F2` automatically uses the `ct0` value in the `cookie`, so copying the complete `cookie` is enough. The `X-Csrf-Token` in the [**F2 Configuration File**](/site-config#main-configuration-file) is only used when the `cookie` has no `ct0`.
+- If unable to fetch data or facing restrictions, update the `Cookie` promptly.
 - Only ASCII characters are allowed. Double-check before updating configurations.
 :::
 
@@ -119,6 +127,14 @@ Example: `--proxies http://x.x.x.x https://x.x.x.x`.
 > [!IMPORTANT] IMPORTANT ❗❗❗
 > **If the proxy does not support HTTPS egress, use: `--proxies http://x.x.x.x http://x.x.x.x`.**
 
+### `--insecure`
+
+Disable `TLS` certificate verification. Use it only behind a trusted debugging proxy. The flag affects the current run only and is not written to the configuration file; set `verify: false` in `conf.yaml` to disable it permanently. See [TLS certificate verification](/en/site-config#tls-certificate-verification).
+
+```bash
+f2 x --insecure --proxies http 127.0.0.1:8888 ...
+```
+
 ### `--update-config`
 
 Updates the configuration file via `CLI` parameters. See: [Configuring Cookies](/en/site-config#configure-cookies).
@@ -140,6 +156,10 @@ Automatically retrieves `cookie` from the browser. Ensure the selected browser i
 - `brave`
 - `vivaldi`
 - `librewolf`
+
+On success, the cookie is written to the configuration file (the custom file given with `-c`, if any) and `F2` exits without downloading; on failure, it prints the reason and exits with code `1`.
+
+Cookies from the latest Chrome and Edge on Windows cannot be read automatically for now; see the [FAQ](/en/faq#auto-cookie-failed-unable-to-get-key-for-cookie-decryption) for workarounds.
 
 User settings switching is not supported.
 

@@ -27,7 +27,6 @@ from f2.apps.douyin.model import (
     PostCommentReply,
     PostDanmaku,
     PostDetail,
-    PostSearch,
     PostStats,
     PostTimeDanmaku,
     QueryUser,
@@ -88,6 +87,7 @@ from f2.apps.douyin.proto.douyin_webcast_pb2 import (
 from f2.apps.douyin.utils import (
     ABogusManager,
     ClientConfManager,
+    GatewayHeaderManager,
     TokenManager,
     XBogusManager,
 )
@@ -106,7 +106,12 @@ class DouyinCrawler(BaseCrawler):
         # 需要与cli同步
         kwargs = kwargs or {}
         proxies = kwargs.get("proxies", {"http://": None, "https://": None})
-        self.headers = kwargs.get("headers", {}) | {"Cookie": kwargs.get("cookie")}
+        cookie = kwargs.get("cookie")
+        # 自动附加抖音网关要求的 x-tt-argus / uifid 请求头（#443），已配置的同名请求头优先。
+        # 标注为 Any 以保持原实现的宽松类型（各接口通过 self.headers.get("User-Agent") 取值）
+        self.headers: Any = GatewayHeaderManager.merge_headers(
+            kwargs.get("headers", {}), cookie
+        ) | {"Cookie": cookie}
         self.bogus_manager: Union[Type[ABogusManager], Type[XBogusManager]] = (
             ABogusManager if ClientConfManager.encryption() == "ab" else XBogusManager
         )
@@ -603,6 +608,7 @@ class DouyinWebSocketCrawler(WebSocketCrawler):
         # wss_verify = wss_conf.get("verify")
         # 暂不支持wss本地证书验证
 
+        server: Optional[WebSocketServer] = None
         try:
             server = await serve(self.register_client, wss_domain, wss_port)
             logger.info(
@@ -620,9 +626,11 @@ class DouyinWebSocketCrawler(WebSocketCrawler):
                 _("[StartServer] [❌ 服务器启动失败] | [错误：{0}]").format(exc)
             )
         finally:
-            server.close()
-            await server.wait_closed()
-            logger.info(_("[StartServer] [🔒 本地 WebSocket 服务器已关闭]"))
+            # 端口被占用等原因启动失败时 server 仍为 None，此前会在这里抛出 UnboundLocalError
+            if server is not None:
+                server.close()
+                await server.wait_closed()
+                logger.info(_("[StartServer] [🔒 本地 WebSocket 服务器已关闭]"))
 
     async def _timeout_check(self, server: WebSocketServer) -> None:
         """
@@ -643,7 +651,7 @@ class DouyinWebSocketCrawler(WebSocketCrawler):
                 break
         server.close()
         # await server.wait_closed()
-        await self.close_websocket()
+        await self.close_websocket(reason="no_client")
 
     async def register_client(self, websocket: WebSocketServerProtocol) -> None:
         """

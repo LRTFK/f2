@@ -1,20 +1,19 @@
 # path: f2/exceptions/file_exceptions.py
 
-from f2.i18n.translator import _
-from f2.log.logger import logger
+from f2.exceptions.base import F2Error
 
 
-class FileError(Exception):
-    """基本的文件错误异常类，其他文件异常都会继承这个类"""
+class FileError(F2Error):
+    """基本的文件错误异常类，其他文件异常都会继承这个类（构造时不记录日志）"""
 
     def __init__(self, message, filepath=None):
-        logger.error(_("请前往QA文档 https://f2.wiki/faq 查看相关帮助"))
         self.filepath = filepath
         super().__init__(message)
 
     def __str__(self):
         """返回错误信息和文件路径（如果有的话）"""
-        return f"{super().__str__()} Filepath: {self.filepath}" if self.filepath else ""
+        message = super().__str__()
+        return f"{message} Filepath: {self.filepath}" if self.filepath else message
 
 
 class FileNotFound(FileError):

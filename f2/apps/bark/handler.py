@@ -8,10 +8,11 @@ from typing import Optional
 from f2.apps.bark.crawler import BarkCrawler
 from f2.apps.bark.filter import BarkNotificationFilter
 from f2.apps.bark.model import BarkCipherModel, BarkModel
-from f2.apps.bark.utils import ClientConfManager, generate_numeric_bytes
+from f2.apps.bark.utils import ClientConfManager, generate_alphanumeric_bytes
+from f2.exceptions.base import F2Error
 from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
-from f2.utils.core.decorators import mode_function_map, mode_handler
+from f2.utils.core.decorators import get_mode_handlers, mode_handler
 from f2.utils.crypto.aes import AESEncryptionUtils
 
 
@@ -106,13 +107,19 @@ class BarkHandler:
 
         aes_key = aes_key.encode("utf-8")
 
-        # 根据加密模式生成不同位数的 IV
+        # 根据加密模式生成不同位数的 IV；IV 以字符串随请求发送，所以只用字母与数字
         if aes_mode == "ECB":
+            # ECB 只为兼容 Bark App 的同名选项而保留
+            logger.warning(
+                _(
+                    "Bark 推送加密正在使用 ECB 模式，相同的明文块会得到相同的密文，安全性较弱，建议在 Bark App 与配置文件中都改用 CBC 模式"
+                )
+            )
             aes_iv = None
         elif aes_mode == "CBC":
-            aes_iv = generate_numeric_bytes(16)
+            aes_iv = generate_alphanumeric_bytes(16)
         elif aes_mode == "GCM":
-            aes_iv = generate_numeric_bytes(12)
+            aes_iv = generate_alphanumeric_bytes(12)
         else:
             raise ValueError(_("无效的加密模式：{0}").format(aes_mode))
 
@@ -193,7 +200,12 @@ class BarkHandler:
 
 async def main(kwargs):
     mode = kwargs.get("mode")
-    if mode in mode_function_map:
-        await mode_function_map[mode](BarkHandler(kwargs))
+    handlers = get_mode_handlers(__name__)
+    if mode in handlers:
+        result = await handlers[mode](BarkHandler(kwargs))
+        # 作为独立命令发送失败时抛出异常，CLI 以非零退出码结束；
+        # 作为其它应用的下载通知时失败只记录日志，不影响下载
+        if result is None or result.code is None:
+            raise F2Error(_("Bark 通知发送失败"))
     else:
-        logger.error(_("不存在该模式：{0}").format(mode))
+        raise F2Error(_("不存在该模式：{0}").format(mode))

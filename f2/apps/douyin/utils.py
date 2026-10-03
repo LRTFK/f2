@@ -6,8 +6,9 @@ import random
 import re
 import time
 import traceback
+import uuid
 from pathlib import Path
-from typing import Union
+from typing import Any, List, Optional, Union
 from urllib.parse import urlparse
 
 import httpx
@@ -29,6 +30,8 @@ from f2.utils.crypto.bytedance.abogus import ABogus as AB
 from f2.utils.crypto.bytedance.abogus import BrowserFingerprintGenerator as BrowserFpGen
 from f2.utils.crypto.bytedance.xbogus import XBogus as XB
 from f2.utils.file.name import split_filename
+from f2.utils.file.path import get_user_folder_path, migrate_user_folders
+from f2.utils.http.cookie import parse_cookie_str
 from f2.utils.string.formatter import extract_valid_urls
 from f2.utils.string.generator import gen_random_str
 from f2.utils.time.timestamp import get_timestamp
@@ -136,6 +139,7 @@ class TokenManager(BaseCrawler):
     类方法:
     - __init__: 初始化 TokenManager 实例，并调用父类的初始化方法。
     - gen_real_msToken: 类方法，生成真实的 msToken，当出现错误时返回虚假的值。
+    - cached_msToken: 类方法，返回进程内缓存的真实 msToken，首次调用时才生成。
     - gen_false_msToken: 类方法，生成随机 msToken。
     - gen_ttwid: 类方法，生成请求必带的 ttwid。
 
@@ -146,6 +150,9 @@ class TokenManager(BaseCrawler):
     ```python
         # 生成真实的 msToken
         msToken = TokenManager.gen_real_msToken()
+
+        # 获取进程内缓存的真实 msToken（首次调用时生成）
+        msToken = TokenManager.cached_msToken()
 
         # 生成虚假的 msToken
         false_msToken = TokenManager.gen_false_msToken()
@@ -176,6 +183,8 @@ class TokenManager(BaseCrawler):
         "Content-Type": "application/json; charset=UTF-8",
         "Referer": "https://www.douyin.com/",
     }
+    # 进程内缓存的真实 msToken，由 cached_msToken 按需生成
+    _msToken_cache: Optional[str] = None
 
     def __init__(self):
         super().__init__(proxies=self.proxies)
@@ -291,6 +300,29 @@ class TokenManager(BaseCrawler):
             )
 
     @classmethod
+    def cached_msToken(cls) -> str:
+        """
+        返回进程内缓存的真实 msToken。
+
+        首次调用时才通过 gen_real_msToken 联网生成，之后复用同一个值；
+        请求模型以此作为 msToken 的默认值，因此导入模块不会联网。
+        生成失败时不缓存，下一次调用会重新生成。
+
+        Returns:
+            str: 真实的 msToken。
+
+        Raises:
+            APITimeoutError: 请求超时错误。
+            APIConnectionError: 网络连接错误。
+            APIUnauthorizedError: 请求协议错误。
+            APIResponseError: 状态码错误或响应内容不符合要求。
+        """
+
+        if cls._msToken_cache is None:
+            cls._msToken_cache = cls.gen_real_msToken()
+        return cls._msToken_cache
+
+    @classmethod
     def gen_false_msToken(cls) -> str:
         """生成随机 msToken (Generate random msToken)"""
         false_msToken = gen_random_str(182) + "=="
@@ -398,6 +430,37 @@ class TokenManager(BaseCrawler):
                     exc,
                 )
             )
+
+    @classmethod
+    def gen_secsdk_uid(cls) -> str:
+        """
+        生成 cookie 字段 x-web-secsdk-uid (Generate the x-web-secsdk-uid cookie field)
+
+        直播弹幕初始化接口 im/fetch 会强校验这个字段，缺少时返回空内容（#412），
+        浏览器里它是一个随机 UUID。
+
+        Returns:
+            str: x-web-secsdk-uid 的值
+        """
+        return str(uuid.uuid4())
+
+    @classmethod
+    def ensure_secsdk_uid(cls, cookie: Optional[str]) -> str:
+        """
+        cookie 中没有 x-web-secsdk-uid 时补上一个随机值，已有时保持不变
+
+        Args:
+            cookie (Optional[str]): 原始 cookie
+
+        Returns:
+            str: 带有 x-web-secsdk-uid 的 cookie
+        """
+        cookie = (cookie or "").strip()
+        if "x-web-secsdk-uid" in parse_cookie_str(cookie):
+            return cookie
+        if cookie and not cookie.endswith(";"):
+            cookie += ";"
+        return f"{cookie} x-web-secsdk-uid={cls.gen_secsdk_uid()}".strip()
 
     @classmethod
     def gen_webid(cls) -> str:
@@ -543,6 +606,86 @@ class VerifyFpManager:
     @classmethod
     def gen_s_v_web_id(cls) -> str:
         return cls.gen_verify_fp()
+
+
+class GatewayHeaderManager:
+    """
+    抖音接口网关请求头管理 (Headers required by Douyin's API gateway)
+
+    2026 年 8 月起，抖音在接口网关挂载了 ArgusSecurityPlugin：请求缺少 `x-tt-argus` 头时，
+    主页作品、单个作品、点赞、收藏等接口直接返回 403
+    `Blocked by ArgusSecurityPlugin Uifid Not Found`。实测网关目前只校验该请求头是否存在，
+    与 cookie 是否登录、是否包含 `UIFID` 都无关，因此默认发送占位值。
+
+    浏览器还会发送 `uifid` 请求头，取值为 cookie 中的 `UIFID`（未登录时为 `UIFID_TEMP`）。
+    这两个 cookie 由网页端经过虚拟机混淆的脚本根据浏览器指纹生成，这里直接从 cookie 读取，
+    与浏览器保持一致；cookie 中没有时不发送，避免出现空值。
+
+    类属性:
+    - ARGUS_PLACEHOLDER: `x-tt-argus` 请求头的占位值。
+
+    类方法:
+    - gen_gateway_headers: 根据 cookie 生成网关要求的请求头。
+    - merge_headers: 把网关请求头合并进已配置的请求头，已配置的同名请求头优先（不区分大小写）。
+
+    使用示例:
+    ```python
+        headers = GatewayHeaderManager.gen_gateway_headers(cookie)
+        # {"x-tt-argus": "1", "uifid": "..."}
+    ```
+
+    备注:
+    - `x-tt-argus` 是权宜之计：若网关将来开始校验取值，可在 `conf.yaml` 的 `douyin.headers`
+      中填写浏览器请求里的 `x-tt-argus` 与 `uifid` 覆盖默认值。
+    - 参考 https://github.com/Johnserf-Seed/f2/issues/443
+    """
+
+    ARGUS_PLACEHOLDER = "1"
+
+    @classmethod
+    def gen_gateway_headers(cls, cookie: Optional[str] = None) -> dict:
+        """
+        根据 cookie 生成网关要求的请求头 (Build the gateway headers from a cookie)
+
+        Args:
+            cookie (Optional[str]): 请求使用的 cookie 字符串
+
+        Returns:
+            dict: 总是包含 `x-tt-argus`；cookie 中有 `UIFID` 或 `UIFID_TEMP` 时包含 `uifid`
+        """
+
+        headers = {"x-tt-argus": cls.ARGUS_PLACEHOLDER}
+        cookies = parse_cookie_str(cookie) if isinstance(cookie, str) else {}
+        uifid = cookies.get("UIFID") or cookies.get("UIFID_TEMP")
+        if uifid:
+            headers["uifid"] = uifid
+        return headers
+
+    @classmethod
+    def merge_headers(
+        cls, headers: Optional[dict], cookie: Optional[str] = None
+    ) -> dict:
+        """
+        把网关请求头合并进已配置的请求头 (Merge the gateway headers into configured headers)
+
+        已配置的同名请求头优先，比较时不区分大小写，避免同一个请求头被发送两次。
+
+        Args:
+            headers (Optional[dict]): 已配置的请求头
+            cookie (Optional[str]): 请求使用的 cookie 字符串
+
+        Returns:
+            dict: 合并后的请求头
+        """
+
+        configured = dict(headers or {})
+        present = {name.lower() for name in configured}
+        gateway = {
+            name: value
+            for name, value in cls.gen_gateway_headers(cookie).items()
+            if name.lower() not in present
+        }
+        return {**gateway, **configured}
 
 
 class XBogusManager:
@@ -990,7 +1133,8 @@ class MixIdFetcher(BaseCrawler):
     该类继承自 BaseCrawler，并利用其 HTTP 客户端功能来发送请求。
 
     类属性:
-    - _DOUYIN_MIX_URL_PATTERN (re.Pattern): 抖音合集 URL 的正则表达式模式。
+    - _DOUYIN_MIX_URL_PATTERN (re.Pattern): 抖音合集 URL 的正则表达式模式，支持合集页 collection/、
+      合集分享页 share/mix/detail/ 与短剧分享页 share/playlet/detail/（短剧也是合集）。
     - proxies (dict): 代理配置。
 
     方法:
@@ -1015,7 +1159,9 @@ class MixIdFetcher(BaseCrawler):
     ```
     """
 
-    _DOUYIN_MIX_URL_PATTERN = re.compile(r"collection/([^/?]*)")
+    _DOUYIN_MIX_URL_PATTERN = re.compile(
+        r"(?:collection|mix/detail|playlet/detail)/(\d+)"
+    )
     proxies = ClientConfManager.proxies()
 
     def __init__(self):
@@ -1051,20 +1197,22 @@ class MixIdFetcher(BaseCrawler):
             raise APINotFoundError(_("输入的URL不合法。类名：{0}").format(cls.__name__))
         url = extracted_url
 
+        # 地址里已经带有合集ID时直接返回，短链接才需要请求跳转后的地址
+        if match := cls._DOUYIN_MIX_URL_PATTERN.search(url):
+            return match.group(1)
+
         instance = cls()
 
         try:
             response = await instance.aclient.get(url, follow_redirects=True)
             response.raise_for_status()
 
-            mix_pattern = cls._DOUYIN_MIX_URL_PATTERN
-
-            match = mix_pattern.search(str(response.url))
+            match = cls._DOUYIN_MIX_URL_PATTERN.search(str(response.url))
             if match:
                 mix_id = match.group(1)
             else:
                 raise APIResponseError(
-                    _("未在响应的地址中找到mix_id，检查链接是否为合集页")
+                    _("未在响应的地址中找到mix_id，检查链接是否为合集或短剧页")
                 )
             return mix_id
 
@@ -1521,25 +1669,13 @@ def create_user_folder(kwargs: dict, nickname: Union[str, int]) -> Path:
         (If kwargs is not in dict format, TypeError will be raised.)
     """
 
-    # 确定函数参数是否正确
-    if not isinstance(kwargs, dict):
-        raise TypeError("kwargs 参数必须是字典")
-
-    # 创建基础路径
-    base_path = Path(kwargs.get("path", "Download"))
-
-    # 添加下载模式和用户名
-    user_path = (
-        base_path / "douyin" / kwargs.get("mode", "PLEASE_SETUP_MODE") / str(nickname)
-    )
-
-    # 获取绝对路径并确保它存在
-    resolve_user_path = user_path.resolve()
+    # 获取绝对路径，与重命名用户目录时的路径计算一致
+    user_path = get_user_folder_path(kwargs, "douyin", nickname)
 
     # 创建目录
-    resolve_user_path.mkdir(parents=True, exist_ok=True)
+    user_path.mkdir(parents=True, exist_ok=True)
 
-    return resolve_user_path
+    return user_path
 
 
 def rename_user_folder(old_path: Path, new_nickname: str) -> Path:
@@ -1575,17 +1711,84 @@ def create_or_rename_user_folder(
 
     Returns:
         user_path (Path): 用户目录路径 (User directory path)
-    """
-    user_path = create_user_folder(kwargs, current_nickname)
 
-    if not local_user_data:
+    Note:
+        昵称变化时，把各下载模式下旧昵称的目录都重命名为新昵称，已下载的文件随目录保留；
+        某个模式下新昵称的目录已存在时，该模式的两个目录都保持不变。
+        (When the nickname changes, the folders of the old nickname are renamed to the
+        new nickname in every download mode, keeping the downloaded files; in a mode
+        where a folder of the new nickname already exists, both folders are left as
+        they are.)
+    """
+    local_nickname = local_user_data.get("nickname") if local_user_data else None
+
+    if local_nickname and current_nickname and local_nickname != current_nickname:
+        # 昵称不一致，把各下载模式下旧昵称的目录重命名为新昵称
+        user_path = migrate_user_folders(
+            kwargs, "douyin", local_nickname, current_nickname
+        )
+        user_path.mkdir(parents=True, exist_ok=True)
         return user_path
 
-    if local_user_data.get("nickname") != current_nickname:
-        # 昵称不一致，触发目录更新操作
-        user_path = rename_user_folder(user_path, current_nickname)
+    return create_user_folder(kwargs, current_nickname)
 
-    return user_path
+
+def _to_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def select_best_bit_rate(bit_rates: Any) -> Optional[dict]:
+    """
+    从作品的多个清晰度中选出最高的一项 (Pick the highest quality from a work's bit_rate list)
+
+    先比较分辨率（宽 × 高），相同时比较码率，仍相同时保留靠前的一项。接口按码率排序，
+    高分辨率的 H.265 版本码率可能低于 1080p 的 H.264 版本，只取第一项会漏掉 2K、4K（#214）。
+
+    Args:
+        bit_rates (list): 作品数据中的 video.bit_rate 列表
+
+    Returns:
+        Optional[dict]: 清晰度最高的一项，没有可用的播放地址时返回 None
+    """
+
+    candidates = [
+        item
+        for item in bit_rates or []
+        if isinstance(item, dict) and (item.get("play_addr") or {}).get("url_list")
+    ]
+    if not candidates:
+        return None
+
+    def quality(item: dict) -> tuple:
+        play_addr = item["play_addr"]
+        area = _to_int(play_addr.get("width")) * _to_int(play_addr.get("height"))
+        return area, _to_int(item.get("bit_rate"))
+
+    return max(candidates, key=quality)
+
+
+def get_video_play_urls(video: Any) -> Optional[List[str]]:
+    """
+    返回作品视频最高清晰度的播放地址 (Return the play URLs of a work's best quality)
+
+    没有清晰度列表时使用 video.play_addr，都没有时返回 None。
+
+    Args:
+        video (dict): 作品数据中的 video 字段
+
+    Returns:
+        Optional[List[str]]: 同一视频的多个播放地址，下载时依次尝试
+    """
+
+    if not isinstance(video, dict):
+        return None
+    best = select_best_bit_rate(video.get("bit_rate"))
+    if best:
+        return best["play_addr"]["url_list"]
+    return (video.get("play_addr") or {}).get("url_list") or None
 
 
 def json_2_lrc(data: Union[str, list, dict]) -> str:

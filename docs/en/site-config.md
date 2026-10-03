@@ -9,9 +9,10 @@ Read this chapter carefully to understand how `F2` configuration files work and 
 `F2` uses several types of configuration files:
 
 - **App low-frequency/main configuration file** (`app.yaml`): stores settings that rarely change, such as `cookie`, filename templates, download paths, and network timeouts.
-- **F2 configuration file** (`conf.yaml`): global settings like computation parameters and proxies for each app.
+- **F2 configuration file** (`conf.yaml`): global settings such as computation parameters, proxies, certificate verification and update checks.
+- **User configuration files** (`conf.yaml`): placed in your user directory, your project directory or the path set by `F2_CONFIG`; they contain only the settings you want to change and override the defaults of the `F2` configuration file. See [User configuration files](#user-configuration-files).
 - **App default configuration file** (`defaults.yaml`): initialization templates for each app. <font color=red><u>**Do not modify this file**</u></font>.
-- **Test configuration file** (`test.yaml`): configuration for the project's tests.
+- **Test configuration file** (`test.yaml`): configuration for the project's tests; it only holds guest data and is not shipped in the `wheel`.
 - **Custom configuration files**: high-frequency settings tailored for personal use that override defaults.
 
 ::: info :bulb: What is yaml?
@@ -24,7 +25,11 @@ Presents the data serialization format file in an outline-like indentation manne
 
 **App default configuration file (defaults.yaml)**: used to save the initialization default configuration template of each app, <font color=red><u>**_Please do not modify and use it_**</u> </font>.
 
-**Test Configuration File (test.yaml)**: Used to save the configuration of test cases for `F2`, it is necessary to configure it before running `pytest`.
+**Test Configuration File (test.yaml)**: Holds the configuration used by the `F2` test cases. It only contains guest data and is not shipped in the `wheel`. To run tests with personal cookies, do not write them into this file; supply them in this order of precedence (higher overrides lower):
+
+1. Environment variables `F2_TEST_<APP>_<KEY>`, e.g. `F2_TEST_DOUYIN_COOKIE`, `F2_TEST_BARK_KEY`, `F2_TEST_TIKTOK_DEVICE_ID`;
+2. A `test.local.yaml` next to `test.yaml` (git-ignored, same structure);
+3. The defaults in `test.yaml`.
 
 ::: code-group
 <<< @../../f2/conf/app.yaml
@@ -52,24 +57,28 @@ Check out the list of currently supported apps
 $ f2 -h
 ```
 
-After `F2` is installed, the first step is to run the app’s initialization configuration file command:
+After `F2` is installed, first generate the initial configuration for the app you want to use, for example Douyin:
 
 ::: code-group
 
 ```sh [Windows]
-$ f2 apps --init-config my_apps.yaml
+$ f2 dy --init-config my_dy.yaml
 ```
 
 ```sh [Linux]
-$ f2 apps --init-config my_apps.yaml
+$ f2 dy --init-config my_dy.yaml
 ```
 
 ```sh [MacOS]
-$ f2 apps --init-config my_apps.yaml
+$ f2 dy --init-config my_dy.yaml
 ```
 :::
 
-`my_apps.yaml` is the custom configuration file of the app.
+`my_dy.yaml` is the generated custom configuration file; adjust it as needed. For other apps, replace `dy` with their short name, e.g. `f2 wb --init-config my_wb.yaml`.
+
+::: tip Tip
+When the target file already exists, `--init-config` does not overwrite it: if the file has no configuration for the app yet, the default configuration is appended; otherwise only the missing settings are added. Existing values, other apps' settings and comments are kept, and the original file is backed up to a `.bak` file with the same name before any change. The same file can therefore be initialized for several apps in turn, e.g. `f2 dy --init-config my.yaml` followed by `f2 tk --init-config my.yaml`.
+:::
 
 Then check the [Command Line Guide](guide/what-is-f2) of the **app** and configure your custom configuration file according to the documentation, otherwise it will not work properly.
 
@@ -226,6 +235,34 @@ $ pip3 show f2
 Then check `Location` and find the configuration file in that directory.
 :::
 
+## User configuration files
+
+The `F2` configuration file (`conf.yaml`) lives in `site-packages`, is replaced on upgrade, and may not be writable in some environments. To change only some of its settings, put them in a user configuration file instead of editing `site-packages`.
+
+`F2` reads the following files from lowest to highest priority. Later files override earlier ones, and all of them are layered on top of the default `conf.yaml`:
+
+1. User directory: `~/.f2/conf.yaml` (`C:\Users\<username>\.f2\conf.yaml` on Windows)
+2. Project directory: `conf.yaml` in the directory where you run `F2`
+3. The file set by the `F2_CONFIG` environment variable
+
+The file uses the same structure as the default `conf.yaml`; write only the parts you want to change. Mappings are merged key by key, and other values (including lists) are replaced as a whole. For example, to disable certificate verification and change the Douyin `User-Agent`:
+
+```yaml
+f2:
+  verify: false
+  douyin:
+    headers:
+      User-Agent: "Mozilla/5.0 ..."
+```
+
+::: tip :bulb: Tip
+- When a user configuration file is read, `F2` logs `Loaded user config: <path>` so you can confirm it took effect.
+- User configuration only affects what `F2` reads; it is never written back to the `conf.yaml` in `site-packages`.
+- The interface language is still set with `-l`; `i18n` in user configuration files is ignored.
+- If a file cannot be parsed, its top level is not a mapping, or the file set by `F2_CONFIG` does not exist, `F2` reports an error and exits with code `1`.
+- For app configuration (`app.yaml`), use `-c` to pass a custom configuration file.
+:::
+
 ## Proxy configuration
 
 F2 supports multiple types of proxy servers, including HTTP, HTTPS, SOCKS4, and SOCKS5.
@@ -298,6 +335,35 @@ f2 dy --proxies http proxy.example.com:8080
 ### Proxy testing
 
 F2 will automatically test proxy availability before use. If the proxy cannot connect, an error message will be displayed.
+
+## TLS certificate verification
+
+`F2` verifies `TLS` certificates for every `HTTPS` request by default. Disable it only behind a trusted debugging proxy (for example a capture tool with a self-signed certificate). Any of the following works:
+
+::: code-group
+```yaml [conf.yaml]
+f2:
+  # true (default) / false / path to a CA bundle
+  verify: true
+```
+
+```bash [Command line]
+# Disable verification for this run only; nothing is written to the config file
+f2 dy --insecure -u "https://www.douyin.com/user/xxx" -M post
+```
+
+```python [As a library]
+kwargs = {
+    "headers": {...},
+    "cookie": "...",
+    "verify": False,  # or the path to a CA bundle
+}
+```
+:::
+
+> [!WARNING] Note
+> - With verification disabled, credentials such as `cookie` can be intercepted; `F2` logs one warning when it is off.
+> - This switch only affects `HTTP` requests. The `verify` under the `wss` section configures the local danmaku forwarding service and is unrelated.
 
 ## What's next?
 

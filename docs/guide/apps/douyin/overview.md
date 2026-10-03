@@ -61,11 +61,14 @@ outline: [2,3]
 | :------------------ | :--------------------- | :-------------------------- | :--: |
 | 管理客户端配置        | `ClientConfManager`    |                              |  🟢  |
 | 生成真实msToken      | `TokenManager`         | `gen_real_msToken`           |  🟢  |
+| 获取缓存的真实msToken | `TokenManager`         | `cached_msToken`             |  🟢  |
 | 生成虚假msToken      | `TokenManager`         | `gen_false_msToken`          |  🟢  |
 | 生成ttwid           | `TokenManager`         | `gen_ttwid`                  |  🟢  |
+| 生成x-web-secsdk-uid | `TokenManager`         | `gen_secsdk_uid`             |  🟢  |
 | 生成webid           | `TokenManager`         | `gen_webid`                  |  🟢  |
 | 生成verify_fp       | `VerifyFpManager`      | `gen_verify_fp`              |  🟢  |
 | 生成s_v_web_id      | `VerifyFpManager`      | `gen_s_v_web_id`             |  🟢  |
+| 生成网关请求头        | `GatewayHeaderManager` | `gen_gateway_headers`        |  🟢  |
 | 生成直播signature    | `DouyinWebcastSignature` | `get_signature`            |  🟢  |
 | 使用接口地址生成Xb参数 | `XBogusManager`        | `str_2_endpoint`             |  🟢  |
 | 使用接口模型生成Xb参数 | `XBogusManager`        | `model_2_endpoint`           |  🟢  |
@@ -159,6 +162,7 @@ outline: [2,3]
 | 保存最后请求的作品ID | `DouyinDownloader` | `save_last_aweme_id` |  🟢  |
 | 创建下载任务   | `DouyinDownloader` | `create_download_task` |  🟢  |
 | 处理下载任务   | `DouyinDownloader` | `handler_download` |  🟢  |
+| 按作品数据下载视频或图集 | `DouyinDownloader` | `download_media` |  🟢  |
 | 下载原声      | `DouyinDownloader` | `download_music`   |  🟢  |
 | 下载封面      | `DouyinDownloader` | `download_cover`   |  🟢  |
 | 下载文案      | `DouyinDownloader` | `download_desc`    |  🟢  |
@@ -176,6 +180,7 @@ outline: [2,3]
 - 当 `max_counts` 设置为 `None` 或不传入时，将会获取所有的作品数据。
 - 在一些后端框架 `FastAPI`、`Flask`、`Django` 中可以方便的集成等。
 - 使用登录的 `cookie` 可以无视该账号的私密设置，例如该账号设置私密的 `作品`、`主页`、`喜欢`、`收藏` 等。
+- 下载器不再按固定的作品类型名单下载：图集作品或带有图片的作品下载图集，其他作品只要有视频链接就下载视频，所以 `51`、`53`、`66` 等新类型也能下载。作品没有可下载的内容、被屏蔽或可见状态不支持下载时，会输出警告说明原因。
 :::
 
 ## handler接口列表
@@ -199,6 +204,7 @@ outline: [2,3]
 ::: tip :bulb: 提示
 - 此为 `cli` 模式的接口，开发者可自行定义创建用户目录的功能。
 - 不设置 `mode` 参数时，默认为 `PLEASE_SETUP_MODE` 目录。
+- 用户修改昵称后，会把各下载模式下旧昵称的目录一起重命名（见 `create_or_rename_user_folder`），全部改名后把数据库中的昵称更新为新昵称；有目录冲突或改名失败时保留旧昵称，下次运行继续处理。
 :::
 
 ### 创建作品下载记录 🟢
@@ -581,7 +587,7 @@ outline: [2,3]
 
 ### 直播间wss负载数据 🟢
 
-异步方法，用于获取直播间wss负载数据，是弹幕wss的必要参数。
+异步方法，用于获取直播间wss负载数据，是弹幕wss的必要参数。cookie 中缺少 `x-web-secsdk-uid` 时会自动补上，否则接口会返回空内容。
 
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -770,6 +776,20 @@ outline: [2,3]
 
 <<< @/snippets/douyin/token-manager.py#mstoken-real-sinppest{4}
 
+### 获取缓存的真实msToken 🟢
+
+类方法，返回进程内缓存的真实 `msToken`，首次调用时才联网生成。请求模型的 `msToken` 字段默认通过它在实例化时获取，因此导入模块不会联网。
+
+| 参数 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| 无 | 无 | 无 |
+
+| 返回 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| msToken | str | 缓存的真实msToken |
+
+<<< @/snippets/douyin/token-manager.py#mstoken-cached-sinppest{4}
+
 ### 生成虚假msToken 🟢
 
 类方法，用于生成随机虚假的msToken，不同端点的msToken长度不同。
@@ -801,6 +821,20 @@ outline: [2,3]
 | ttwid | str | ttwid参数 |
 
 <<< @/snippets/douyin/token-manager.py#ttwid-sinppest{4}
+
+### 生成x-web-secsdk-uid 🟢
+
+类方法，用于生成 cookie 字段 `x-web-secsdk-uid`，它是一个随机 UUID。直播弹幕初始化接口会强校验这个字段；调用 `fetch_live_im` 时如果 cookie 里没有，`F2` 会用 `ensure_secsdk_uid` 自动补上。
+
+| 参数 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| 无 | 无 | 无 |
+
+| 返回 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| secsdk_uid | str | x-web-secsdk-uid参数 |
+
+<<< @/snippets/douyin/token-manager.py#secsdk-uid-sinppest{4}
 
 ### 生成webid 🟢
 
@@ -843,6 +877,20 @@ outline: [2,3]
 | s_v_web_id | str | s_v_web_id参数 |
 
 <<< @/snippets/douyin/token-manager.py#s-v-web-id-sinppest{4}
+
+### 生成网关请求头 🟢
+
+类方法，根据 `cookie` 生成抖音接口网关要求的请求头：总是包含 `x-tt-argus`，`cookie` 中有 `UIFID`（未登录时为 `UIFID_TEMP`）时还包含 `uifid`。`DouyinCrawler` 会自动附加这些请求头，已配置的同名请求头优先。
+
+| 参数 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| cookie | str | 请求使用的 cookie，可为空 |
+
+| 返回 | 类型 | 说明 |
+| :--- | :--- | :--- |
+| headers | dict | 需要附加的请求头 |
+
+<<< @/snippets/douyin/token-manager.py#gateway-headers-sinppest{4}
 
 ### 生成直播signature 🟢
 
@@ -1001,7 +1049,7 @@ outline: [2,3]
 
 ### 提取合集id 🟢
 
-类方法，用于从合集链接中提取合集id。
+类方法，用于从合集或短剧链接中提取合集id。支持合集页 `collection/`、合集分享页 `share/mix/detail/`、短剧分享页 `share/playlet/detail/`，以及跳转到这些页面的短链接。地址里已经带有合集id时直接返回，不发起请求。
 
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -1015,7 +1063,7 @@ outline: [2,3]
 
 ### 提取列表合集id 🟢
 
-类方法，用于从合集链接列表中提取合集id。
+类方法，用于从合集或短剧链接列表中提取合集id，支持的地址格式同上。
 
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -1070,9 +1118,9 @@ r_id是直播间的短链标识，room_id是直播间的唯一标识。
 根据配置文件的全局格式化文件名。
 
 ::: details :page_facing_up: 格式化文件名规则
-- `Windows` 文件名长度限制为 `255` 个字符, 开启了长文件名支持后为 `32,767` 个字符。
-- `Unix` 文件名长度限制为 `255` 个字符。
-- 取去除后的 `20` 个字符, 加上后缀, 一般不会超过 `255` 个字符。
+- 文案（`desc`）超过 `200` 字节时截断中间部分，用 `......` 连接。
+- 下载时整个文件名连同后缀不超过 `255` 字节，超出时同样截断中间部分。这是 `ext4` 与多数 `NAS` 文件系统的上限，`NTFS`、`APFS` 按字符计算，不会超出。
+- `Windows` 下路径超过 `260` 个字符时自动改用扩展长度路径（`\\?\`），不需要开启系统的长路径支持。
 - 开发者可以根据自己的需求自定义 `custom_fields` 字段，实现自定义文件名。
 :::
 
@@ -1141,7 +1189,7 @@ r_id是直播间的短链标识，room_id是直播间的唯一标识。
 
 ### 创建或重命名用户目录 🟢
 
-用于创建或重命名用户目录。为上面2个接口的组合。
+用于创建或重命名用户目录。本地记录中的昵称（`local_user_data["nickname"]`）与当前昵称不同时，把各下载模式下旧昵称的用户目录都重命名为当前昵称，已下载的文件随目录保留；没有本地记录或昵称没有变化时直接创建用户目录。
 
 | 参数 | 类型 | 说明 |
 | :--- | :--- | :--- |
@@ -1154,7 +1202,10 @@ r_id是直播间的短链标识，room_id是直播间的唯一标识。
 | user_path | Path | 用户目录路径对象 |
 
 ::: tip :bulb: 提示
-该接口很好的解决了用户改名之后重复重新下载的问题。集成在 `handler` 接口中。开发者无需关心，直接调用 `handler` 的数据接口即可。
+- 目录按 `create_user_folder` 的规则计算（`path`、应用名、`mode`），会处理当前 `path` 下该应用的每个下载模式目录，返回当前下载模式的用户目录。
+- 某个模式下没有旧昵称的目录时跳过；新昵称的目录已存在时，该模式的两个目录都保持不变，不会覆盖或合并，并在日志中提示。
+- 重命名失败（例如目录中的文件正被其他程序占用）时在日志中提示；当前模式本次继续使用旧目录，下次运行再尝试。
+- 该接口集成在 `handler` 的 `get_or_add_user_data` 中，各模式的旧目录都改名后它会把数据库中的昵称更新为新昵称，开发者无需关心，直接调用 `handler` 的数据接口即可。
 :::
 
 ### json歌词转lrc歌词 🟢
