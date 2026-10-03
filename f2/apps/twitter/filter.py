@@ -272,11 +272,10 @@ class TweetDetailFilter(JSONModel):
             "$.data.threaded_conversation_with_injections_v2.instructions[*].entries[*].content.itemContent.tweet_results.result.core.user_results.result.favourites_count"
         )
 
+    # 新 tweet 详情结构已不再返回 has_custom_timelines 字段，保留属性并返回 None
     @property
     def has_custom_timelines(self):
-        return self._get_attr_value(
-            "$.data.threaded_conversation_with_injections_v2.instructions[*].entries[*].content.itemContent.tweet_results.result.core.user_results.result.has_custom_timelines"
-        )
+        return None
 
     @property
     def location(self):
@@ -284,11 +283,10 @@ class TweetDetailFilter(JSONModel):
             "$.data.threaded_conversation_with_injections_v2.instructions[*].entries[*].content.itemContent.tweet_results.result.core.user_results.result.location"
         )
 
+    # 新 tweet 详情结构已不再返回 can_dm 字段，保留属性并返回 None
     @property
     def can_dm(self):
-        return self._get_attr_value(
-            "$.data.threaded_conversation_with_injections_v2.instructions[*].entries[*].content.itemContent.tweet_results.result.core.user_results.result.can_dm"
-        )
+        return None
 
     def _to_raw(self) -> dict:
         return self._data
@@ -395,9 +393,10 @@ class UserProfileFilter(JSONModel):
     def location(self):
         return self._get_attr_value("$.data.user.result.location.location")
 
+    # 新 profile 结构不再返回 dm_permissions 字段，保留属性并返回 None
     @property
     def can_dm(self):
-        return self._get_attr_value("$.data.user.result.dm_permissions.can_dm")
+        return None
 
     def _to_raw(self) -> dict:
         return self._data
