@@ -46,6 +46,13 @@ def main() -> None:
     table.add_row("")
     table.add_row("[b]f2[/b] [magenta]config-wizard[/magenta]")
     table.add_row(_("🧙‍♂️ 启动配置向导，交互式生成配置文件"))
+    table.add_row("")
+    table.add_row(
+        "[b]f2[/b] [magenta]batch[/magenta] [cyan]-P[/cyan] [magenta]<app>[/magenta] [cyan]-b[/cyan] [magenta]<file>[/magenta]"
+    )
+    table.add_row(
+        _("📦 从文本文件读取链接批量下载，例：f2 batch -P douyin -b urls.txt")
+    )
     console.print(
         Panel(table, border_style="bold", title="使用方法 | Usage", title_align="left")
     )
