@@ -24,6 +24,16 @@ def help() -> None:
                 "根据模式提供相应的链接。例如：主页、点赞、收藏作品填入主页链接，单作品填入作品链接，合集与直播同上"
             ),
         ),
+        (
+            "-b --batch",
+            "[dark_cyan]Path",
+            _("批量下载：从文本文件读取链接，每行一条，忽略空行与以 # 开头的注释行"),
+        ),
+        (
+            "-O --order",
+            "[dark_cyan]Choice",
+            _("批量下载的执行顺序：asc 正序、desc 倒序、random 随机"),
+        ),
         ("-m --music", "[dark_cyan]Bool", _("是否保存视频原声")),
         ("-v --cover", "[dark_cyan]Bool", _("是否保存视频封面")),
         ("-d --desc", "[dark_cyan]Bool", _("是否保存视频文案")),

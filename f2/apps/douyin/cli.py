@@ -13,6 +13,7 @@ from f2.cli.cli_commands import set_cli_config
 from f2.i18n.translator import _
 from f2.log.logger import logger, trace_logger
 from f2.log.redact import redact_config
+from f2.utils.batch_utils import ORDER_CHOICES, read_urls_from_file, run_batch_urls
 from f2.utils.config.conf_manager import ConfigManager, get_f2_setting
 from f2.utils.config.merge import (
     check_number_options,
@@ -206,6 +207,20 @@ def validate_proxies(
     help=_(
         "根据模式提供相应的链接。例如：主页、点赞、收藏作品填入主页链接，单作品填入作品链接，合集与直播同上"
     ),
+)
+@click.option(
+    "--batch",
+    "-b",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    help=_("批量下载：从文本文件读取链接，每行一条，忽略空行与以 # 开头的注释行"),
+)
+@click.option(
+    "--order",
+    "-O",
+    type=click.Choice(ORDER_CHOICES),
+    default="asc",
+    show_default=True,
+    help=_("批量下载的执行顺序：asc 正序、desc 倒序、random 随机"),
 )
 @click.option(
     "--music",
@@ -484,6 +499,23 @@ def douyin(
     logger.debug(_("主配置参数：{0}").format(redact_config(main_conf)))
     logger.debug(_("自定义配置参数：{0}").format(redact_config(custom_conf)))
     logger.debug(_("CLI参数：{0}").format(redact_config(kwargs)))
+
+    # 批量下载：从文件读取链接，逐条按上面的配置执行，某一条失败不中断后续
+    if kwargs.get("batch"):
+        # 只看命令行是否给了 --url：配置文件里的 url 由批量文件逐条覆盖
+        if ctx.params.get("url"):
+            raise click.UsageError(_("--batch 与 --url 不能同时使用"))
+        batch_file = kwargs.pop("batch")
+        order = kwargs.pop("order")
+        run_batch_urls(
+            ctx,
+            read_urls_from_file(batch_file),
+            order,
+            lambda url: ctx.invoke(
+                set_cli_config, **{**kwargs, "url": url, "app_name": "douyin"}
+            ),
+        )
+        return
 
     # 尝试从命令行参数或kwargs中获取url和mode
     missing_params = [param for param in ["url", "mode"] if not kwargs.get(param)]

@@ -18,6 +18,16 @@ def help() -> None:
     options = [
         ("-c --config", "[dark_cyan]Path", _("配置文件的路径，最低优先")),
         ("-u --url", "[dark_cyan]str", _("除了单个微博外，其他URL都需要用户主页URL")),
+        (
+            "-b --batch",
+            "[dark_cyan]Path",
+            _("批量下载：从文本文件读取链接，每行一条，忽略空行与以 # 开头的注释行"),
+        ),
+        (
+            "-O --order",
+            "[dark_cyan]Choice",
+            _("批量下载的执行顺序：asc 正序、desc 倒序、random 随机"),
+        ),
         ("-p --path", "[dark_cyan]str", _("微博保存位置，默认为 'Download'")),
         (
             "-f --folderize",
